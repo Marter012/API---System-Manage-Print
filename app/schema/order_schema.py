@@ -1,3 +1,5 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
 from app.schema.order_item_schema import OrderItemLoad
@@ -39,9 +41,6 @@ class OrderUpdate(BaseModel):
 
     customer_name: str | None = None
 
-    # IMPORTANTE:
-    # No recomiendo modificar items mediante este update.
-    # El stock ya fue afectado por los movimientos.
     items: list[OrderItemLoad] | None = None
 
     method_payment: str | None = None
@@ -59,3 +58,5 @@ class OrderResponse(
 ):
 
     total_price: float
+
+    created_at: datetime
