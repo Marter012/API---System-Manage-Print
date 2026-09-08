@@ -2,20 +2,16 @@ from datetime import datetime
 
 from pydantic import BaseModel
 
-from app.schema.order_item_schema import OrderItemLoad
 from app.schema.base_schema import MongoModel
 
+from app.schema.order_item_schema import (
+    OrderItemLoad
+)
 
-PAYMENT_PENDING = "pending"
-PAYMENT_PAID = "paid"
-PAYMENT_CANCELLED = "cancelled"
-
-
-VALID_PAYMENT_STATUS = [
-    PAYMENT_PENDING,
-    PAYMENT_PAID,
-    PAYMENT_CANCELLED
-]
+from app.schema.payment_schema import (
+    PaymentMethod,
+    PaymentStatus
+)
 
 
 class OrderCreate(BaseModel):
@@ -26,11 +22,13 @@ class OrderCreate(BaseModel):
 
     items: list[OrderItemLoad]
 
-    method_payment: str
+    method_payment: PaymentMethod
 
-    status_payment: str
+    status_payment: PaymentStatus
 
     delivery_time: str
+
+    cash_register_id: str | None = None
 
     status: bool = True
 
@@ -41,13 +39,13 @@ class OrderUpdate(BaseModel):
 
     customer_name: str | None = None
 
-    items: list[OrderItemLoad] | None = None
+    method_payment: PaymentMethod | None = None
 
-    method_payment: str | None = None
-
-    status_payment: str | None = None
+    status_payment: PaymentStatus | None = None
 
     delivery_time: str | None = None
+
+    cash_register_id: str | None = None
 
     status: bool | None = None
 

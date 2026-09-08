@@ -30,12 +30,6 @@ from app.schema.cash_movement_schema import (
     CashMovementCreate
 )
 
-from app.schema.order_schema import (
-    PAYMENT_PAID,
-    PAYMENT_PENDING,
-    PAYMENT_CANCELLED
-)
-
 from app.utils.exceptions import NotFoundException
 
 
@@ -45,34 +39,23 @@ class OrderService(BaseService):
 
         self.repository = OrderRepository()
 
-        self.product_repository = (
-            ProductRepository()
-        )
+        self.product_repository = ProductRepository()
 
-        self.stock_movement_service = (
-            StockMovementService()
-        )
+        self.stock_movement_service = StockMovementService()
 
-        self.cash_movement_service = (
-            CashMovementService()
-        )
+        self.cash_movement_service = CashMovementService()
 
-        self.cash_register_repository = (
-            CashRegisterRepository()
-        )
+        self.cash_register_repository = CashRegisterRepository()
 
-        super().__init__(
-            self.repository
-        )
+        super().__init__(self.repository)
 
     # =========================================================
-    # PROCESS ITEMS
+    # PROCESAR PRODUCTOS DE LA ORDEN
     # =========================================================
 
     async def _process_items(self, items):
 
         if not items:
-
             raise NotFoundException(
                 "No se puede crear una comanda sin productos"
             )
@@ -83,35 +66,26 @@ class OrderService(BaseService):
 
         for item in items:
 
-            product = (
-                await self.product_repository.get_by_id(
-                    item.product_id
-                )
+            product = await self.product_repository.get_by_id(
+                item.product_id
             )
 
             if not product:
-
                 raise NotFoundException(
-                    f"El producto con ID "
-                    f"{item.product_id} no existe"
+                    f"El producto con ID {item.product_id} no existe"
                 )
 
             if not product["status"]:
-
                 raise NotFoundException(
-                    f"El producto "
-                    f"'{product['name']}' está inactivo."
+                    f"El producto '{product['name']}' está inactivo."
                 )
 
             if item.quantity <= 0:
-
                 raise NotFoundException(
-                    "La cantidad del producto "
-                    "debe ser mayor a 0"
+                    "La cantidad del producto debe ser mayor a 0"
                 )
 
             if product["quantity"] < item.quantity:
-
                 raise NotFoundException(
                     f"No hay stock suficiente del producto: "
                     f"{product['name']}. "
@@ -121,130 +95,149 @@ class OrderService(BaseService):
 
             unit_price = product["price"]
 
-            subtotal = (
-                unit_price * item.quantity
-            )
+            subtotal = unit_price * item.quantity
 
             order_item = {
-
                 "id": item.product_id,
-
                 "product_id": item.product_id,
-
                 "name": product["name"],
-
                 "quantity": item.quantity,
-
                 "unit_price": unit_price,
-
                 "subtotal": subtotal,
-
                 "status": True
             }
 
-            order_items.append(
-                order_item
-            )
+            order_items.append(order_item)
 
             total_price += subtotal
 
         return order_items, total_price
 
     # =========================================================
-    # CREATE ORDER
+    # VALIDAR CAJA
+    # =========================================================
+
+    async def _get_cash_register(
+        self,
+        cash_register_id: str
+    ):
+
+        cash_register = await self.cash_register_repository.get_by_id(
+            cash_register_id
+        )
+
+        if not cash_register:
+            raise NotFoundException(
+                "No se encontró la caja indicada"
+            )
+
+        if not cash_register["status"]:
+            raise NotFoundException(
+                "La caja indicada está inactiva"
+            )
+
+        if cash_register["status_cash_register"] != "open":
+            raise NotFoundException(
+                "La caja indicada está cerrada. "
+                "No se pueden crear órdenes asociadas a una caja cerrada."
+            )
+
+        return cash_register
+
+    # =========================================================
+    # CREAR ORDEN
     # =========================================================
 
     async def create(self, data):
 
         # -----------------------------------------------------
-        # VALIDAR ESTADO DE PAGO
+        # PROCESAR PRODUCTOS
         # -----------------------------------------------------
 
-        if data.status_payment not in [
-            PAYMENT_PENDING,
-            PAYMENT_PAID,
-            PAYMENT_CANCELLED
-        ]:
-
-            raise NotFoundException(
-                "Estado de pago no válido. "
-                "Use: paid, pending o cancelled"
-            )
-
-        # -----------------------------------------------------
-        # VALIDAR PRODUCTOS
-        # -----------------------------------------------------
-
-        items, total_price = (
-            await self._process_items(
-                data.items
-            )
+        items, total_price = await self._process_items(
+            data.items
         )
 
         # -----------------------------------------------------
-        # CREAR ORDER
+        # VALIDAR CAJA
+        #
+        # Si la orden tiene una caja asociada, la caja SIEMPRE
+        # debe estar abierta.
+        #
+        # Esto aplica tanto para:
+        #
+        # pending
+        # paid
+        #
+        # -----------------------------------------------------
+
+        if data.cash_register_id:
+
+            await self._get_cash_register(
+                data.cash_register_id
+            )
+
+        # -----------------------------------------------------
+        # SI LA ORDEN ESTÁ PAGADA
+        #
+        # Debe tener obligatoriamente una caja.
+        # -----------------------------------------------------
+
+        if data.status_payment == "paid":
+
+            if not data.cash_register_id:
+
+                raise NotFoundException(
+                    "Debe indicar la caja para registrar "
+                    "una venta pagada"
+                )
+
+            # Volvemos a validar explícitamente la caja
+            # antes de registrar el movimiento.
+
+            await self._get_cash_register(
+                data.cash_register_id
+            )
+
+        # -----------------------------------------------------
+        # DATOS DE LA ORDEN
         # -----------------------------------------------------
 
         order_data = {
-
             "order_number": data.order_number,
-
             "customer_name": data.customer_name,
-
             "items": items,
-
             "total_price": total_price,
-
             "method_payment": data.method_payment,
-
             "status_payment": data.status_payment,
-
             "created_at": datetime.now(),
-
             "delivery_time": data.delivery_time,
-
+            "cash_register_id": data.cash_register_id,
             "status": data.status
         }
-        
-        if data.status_payment == PAYMENT_PAID:
 
-            cash_register = (
-                await self.cash_register_repository
-                .get_open_register()
-            )
-
-            if not cash_register:
-
-                raise NotFoundException(
-                    "No hay una caja abierta "
-                    "para registrar una venta pagada"
-                )
+        # -----------------------------------------------------
+        # CREAR ORDEN
+        # -----------------------------------------------------
 
         order = await self.repository.create(
             order_data
         )
 
         # -----------------------------------------------------
-        # STOCK
+        # DESCONTAR STOCK
         # -----------------------------------------------------
 
         for item in items:
 
             movement = StockMovementCreate(
-
                 product_id=item["product_id"],
-
                 type="outflow",
-
                 description=(
-                    f"Venta pedido "
-                    f"#{data.order_number}"
+                    f"Venta pedido #{data.order_number}"
                 ),
-
                 quantity=item["quantity"],
-
                 order_id=order["id"],
-
                 status=True
             )
 
@@ -253,68 +246,69 @@ class OrderService(BaseService):
             )
 
         # -----------------------------------------------------
-        # CAJA
+        # SI ESTÁ PAGADA
+        #
+        # CREAR MOVIMIENTO DE CAJA
         # -----------------------------------------------------
 
-        if data.status_payment == PAYMENT_PAID:
+        if data.status_payment == "paid":
 
             await self._create_sale_cash_movement(
                 order=order,
                 total_price=total_price,
-                method_payment=data.method_payment
+                method_payment=data.method_payment,
+                cash_register_id=data.cash_register_id
             )
 
         return order
 
     # =========================================================
-    # CREATE SALE CASH MOVEMENT
+    # CREAR MOVIMIENTO DE VENTA
     # =========================================================
 
     async def _create_sale_cash_movement(
         self,
         order,
         total_price,
-        method_payment
+        method_payment,
+        cash_register_id
     ):
 
-        cash_register = (
-            await self.cash_register_repository
-            .get_open_register()
+        # -----------------------------------------------------
+        # VALIDAR NUEVAMENTE QUE LA CAJA ESTÉ ABIERTA
+        # -----------------------------------------------------
+
+        cash_register = await self._get_cash_register(
+            cash_register_id
         )
 
-        if not cash_register:
-            raise NotFoundException(
-                "No hay una caja abierta "
-                "para registrar el pago"
-            )
+        # -----------------------------------------------------
+        # OBTENER ID DE LA ORDEN
+        # -----------------------------------------------------
 
-        # ID caja
-        cash_register_id = (
-            cash_register.get("id")
-            or cash_register.get("_id")
-        )
-
-        if not cash_register_id:
-            raise NotFoundException(
-                "La caja abierta no tiene un ID válido"
-            )
-
-        # ID orden
         order_id = (
             order.get("id")
             or order.get("_id")
         )
 
         if not order_id:
+
             raise NotFoundException(
                 "La orden no tiene un ID válido"
             )
 
+        # -----------------------------------------------------
+        # CREAR MOVIMIENTO
+        # -----------------------------------------------------
+
         cash_movement = CashMovementCreate(
+            cash_register_id=str(
+                cash_register["id"]
+            ),
 
-            cash_register_id=str(cash_register_id),
-
-            order_id=str(order_id),
+            order_id=str(
+                order_id
+            ),
 
             type="inflow",
 
@@ -325,8 +319,7 @@ class OrderService(BaseService):
             method_payment=method_payment,
 
             description=(
-                f"Venta pedido "
-                f"#{order['order_number']}"
+                f"Venta pedido #{order['order_number']}"
             ),
 
             date=datetime.now(),
@@ -339,7 +332,7 @@ class OrderService(BaseService):
         )
 
     # =========================================================
-    # UPDATE ORDER
+    # ACTUALIZAR ORDEN
     # =========================================================
 
     async def update(
@@ -347,10 +340,6 @@ class OrderService(BaseService):
         order_id,
         data
     ):
-
-        # -----------------------------------------------------
-        # BUSCAR ORDEN ACTUAL
-        # -----------------------------------------------------
 
         old_order = await self.repository.get_by_id(
             order_id
@@ -362,58 +351,28 @@ class OrderService(BaseService):
                 "Orden no encontrada"
             )
 
-        # -----------------------------------------------------
-        # VALIDAR NUEVO ESTADO
-        # -----------------------------------------------------
-
-        if data.status_payment is not None:
-
-            if data.status_payment not in [
-                PAYMENT_PENDING,
-                PAYMENT_PAID,
-                PAYMENT_CANCELLED
-            ]:
-
-                raise NotFoundException(
-                    "Estado de pago no válido. "
-                    "Use: paid, pending o cancelled"
-                )
-
-        old_payment_status = (
-            old_order["status_payment"]
-        )
+        old_payment_status = old_order[
+            "status_payment"
+        ]
 
         new_payment_status = (
             data.status_payment
             if data.status_payment is not None
             else old_payment_status
         )
-        
-        if old_payment_status == PAYMENT_CANCELLED:
 
-            if new_payment_status != PAYMENT_CANCELLED:
+        # -----------------------------------------------------
+        # UNA ORDEN CANCELADA NO PUEDE VOLVER ATRÁS
+        # -----------------------------------------------------
+
+        if old_payment_status == "cancelled":
+
+            if new_payment_status != "cancelled":
 
                 raise NotFoundException(
-                    "Una orden cancelada no puede "
-                    "volver a cambiar su estado de pago"
+                    "Una orden cancelada no puede volver "
+                    "a cambiar su estado de pago"
                 )
-
-        # -----------------------------------------------------
-        # NO PERMITIR MODIFICAR ITEMS
-        # -----------------------------------------------------
-
-        if data.items is not None:
-
-            raise NotFoundException(
-                "No se pueden modificar los productos "
-                "de una orden mediante este endpoint. "
-                "Esto requiere recalcular los movimientos "
-                "de stock."
-            )
-
-        # -----------------------------------------------------
-        # PREPARAR UPDATE
-        # -----------------------------------------------------
 
         update_data = data.model_dump(
             exclude_none=True,
@@ -421,22 +380,66 @@ class OrderService(BaseService):
         )
 
         # -----------------------------------------------------
+        # DETERMINAR CAJA
+        # -----------------------------------------------------
+
+        cash_register_id = (
+            data.cash_register_id
+            if data.cash_register_id is not None
+            else old_order.get("cash_register_id")
+        )
+
+        # -----------------------------------------------------
+        # SI SE ESTÁ ASOCIANDO UNA CAJA
+        #
+        # SIEMPRE DEBE ESTAR ABIERTA
+        # -----------------------------------------------------
+
+        if data.cash_register_id is not None:
+
+            await self._get_cash_register(
+                data.cash_register_id
+            )
+
+        # -----------------------------------------------------
         # PENDING -> PAID
         # -----------------------------------------------------
 
         if (
-            old_payment_status == PAYMENT_PENDING
-            and new_payment_status == PAYMENT_PAID
+            old_payment_status == "pending"
+            and new_payment_status == "paid"
         ):
+
+            if not cash_register_id:
+
+                raise NotFoundException(
+                    "Debe indicar la caja para registrar "
+                    "el pago"
+                )
+
+            # Verificar que la caja esté abierta.
+
+            await self._get_cash_register(
+                cash_register_id
+            )
+
+            method_payment = (
+                data.method_payment
+                if data.method_payment is not None
+                else old_order["method_payment"]
+            )
+
+            # Crear movimiento de caja.
 
             await self._create_sale_cash_movement(
                 order=old_order,
                 total_price=old_order["total_price"],
-                method_payment=(
-                    data.method_payment
-                    if data.method_payment is not None
-                    else old_order["method_payment"]
-                )
+                method_payment=method_payment,
+                cash_register_id=cash_register_id
+            )
+
+            update_data["cash_register_id"] = (
+                cash_register_id
             )
 
         # -----------------------------------------------------
@@ -444,8 +447,8 @@ class OrderService(BaseService):
         # -----------------------------------------------------
 
         if (
-            old_payment_status == PAYMENT_PAID
-            and new_payment_status == PAYMENT_CANCELLED
+            old_payment_status == "paid"
+            and new_payment_status == "cancelled"
         ):
 
             await self._refund_order(
@@ -457,8 +460,8 @@ class OrderService(BaseService):
         # -----------------------------------------------------
 
         if (
-            old_payment_status == PAYMENT_PENDING
-            and new_payment_status == PAYMENT_CANCELLED
+            old_payment_status == "pending"
+            and new_payment_status == "cancelled"
         ):
 
             await self._restore_order_stock(
@@ -466,7 +469,7 @@ class OrderService(BaseService):
             )
 
         # -----------------------------------------------------
-        # ACTUALIZAR ORDER
+        # ACTUALIZAR ORDEN
         # -----------------------------------------------------
 
         return await self.repository.update(
@@ -475,7 +478,7 @@ class OrderService(BaseService):
         )
 
     # =========================================================
-    # REFUND ORDER
+    # REEMBOLSO
     # =========================================================
 
     async def _refund_order(
@@ -483,23 +486,43 @@ class OrderService(BaseService):
         order
     ):
 
-        cash_register = (
-            await self.cash_register_repository
-            .get_open_register()
+        cash_register_id = order.get(
+            "cash_register_id"
         )
 
-        if not cash_register:
+        if not cash_register_id:
 
             raise NotFoundException(
-                "No hay una caja abierta "
-                "para registrar el reembolso"
+                "La orden no tiene una caja asociada"
+            )
+
+        # -----------------------------------------------------
+        # EL REEMBOLSO TAMBIÉN NECESITA UNA CAJA ABIERTA
+        # -----------------------------------------------------
+
+        cash_register = await self._get_cash_register(
+            cash_register_id
+        )
+
+        order_id = (
+            order.get("id")
+            or order.get("_id")
+        )
+
+        if not order_id:
+
+            raise NotFoundException(
+                "La orden no tiene un ID válido"
             )
 
         cash_movement = CashMovementCreate(
+            cash_register_id=str(
+                cash_register["id"]
+            ),
 
-            cash_register_id=cash_register["id"],
-
-            order_id=order["id"],
+            order_id=str(
+                order_id
+            ),
 
             type="outflow",
 
@@ -510,8 +533,7 @@ class OrderService(BaseService):
             method_payment=order["method_payment"],
 
             description=(
-                f"Reembolso pedido "
-                f"#{order['order_number']}"
+                f"Reembolso pedido #{order['order_number']}"
             ),
 
             date=datetime.now(),
@@ -523,13 +545,16 @@ class OrderService(BaseService):
             cash_movement
         )
 
-        # Devolver productos al stock
+        # -----------------------------------------------------
+        # DEVOLVER STOCK
+        # -----------------------------------------------------
+
         await self._restore_order_stock(
             order
         )
 
     # =========================================================
-    # RESTORE ORDER STOCK
+    # RESTAURAR STOCK
     # =========================================================
 
     async def _restore_order_stock(
@@ -540,7 +565,6 @@ class OrderService(BaseService):
         for item in order["items"]:
 
             movement = StockMovementCreate(
-
                 product_id=item["product_id"],
 
                 type="inflow",

@@ -19,7 +19,9 @@ from app.utils.object_id import validate_object_id
 from app.utils.exceptions import NotFoundException
 
 
-class CashMovementService(BaseService):
+class CashMovementService(
+    BaseService
+):
 
     def __init__(self):
 
@@ -31,13 +33,18 @@ class CashMovementService(BaseService):
 
         self.order_repository = OrderRepository()
 
-        super().__init__(self.repository)
+        super().__init__(
+            self.repository
+        )
 
-    # ---------------------------------------------------------
+    # =========================================================
     # CREATE
-    # ---------------------------------------------------------
+    # =========================================================
 
-    async def create(self, data):
+    async def create(
+        self,
+        data
+    ):
 
         # -----------------------------------------------------
         # VALIDAR CAJA
@@ -45,13 +52,13 @@ class CashMovementService(BaseService):
 
         try:
 
-            object_id_cash = validate_object_id(
+            validate_object_id(
                 data.cash_register_id
             )
 
             cash_register = (
                 await self.cash_register_repository.get_by_id(
-                    object_id_cash
+                    data.cash_register_id
                 )
             )
 
@@ -61,24 +68,24 @@ class CashMovementService(BaseService):
                 "No se encontró la caja correspondiente al ID"
             )
 
-        if cash_register["status_cash_register"] != "open":
+        if not cash_register:
+
+            raise NotFoundException(
+                "No se encontró la caja correspondiente al ID"
+            )
+
+        # -----------------------------------------------------
+        # VERIFICAR ESTADO DE CAJA
+        # -----------------------------------------------------
+
+        if (
+            cash_register["status_cash_register"]
+            != "open"
+        ):
 
             raise NotFoundException(
                 "No se pueden registrar movimientos "
                 "en una caja cerrada"
-            )
-
-        # -----------------------------------------------------
-        # VALIDAR TIPO
-        # -----------------------------------------------------
-
-        if data.type not in [
-            "inflow",
-            "outflow"
-        ]:
-
-            raise NotFoundException(
-                "Tipo de movimiento no válido"
             )
 
         # -----------------------------------------------------
@@ -93,21 +100,21 @@ class CashMovementService(BaseService):
 
         amount = data.amount
 
-        # -----------------------------------------------------
-        # ORDEN RELACIONADA
-        # -----------------------------------------------------
+        # =====================================================
+        # SI EL MOVIMIENTO PERTENECE A UNA ORDEN
+        # =====================================================
 
         if data.order_id:
 
             try:
 
-                object_id_order = validate_object_id(
+                validate_object_id(
                     data.order_id
                 )
 
                 order = (
                     await self.order_repository.get_by_id(
-                        object_id_order
+                        data.order_id
                     )
                 )
 
@@ -117,10 +124,39 @@ class CashMovementService(BaseService):
                     "No se encontró la orden correspondiente al ID"
                 )
 
+            if not order:
+
+                raise NotFoundException(
+                    "No se encontró la orden correspondiente al ID"
+                )
+
+            # -------------------------------------------------
+            # VERIFICAR QUE LA ORDEN PERTENEZCA A LA CAJA
+            # -------------------------------------------------
+
+            order_cash_register_id = (
+                order.get("cash_register_id")
+            )
+
+            if (
+                order_cash_register_id
+                and
+                str(order_cash_register_id)
+                != str(data.cash_register_id)
+            ):
+
+                raise NotFoundException(
+                    "La orden no pertenece a la caja seleccionada"
+                )
+
+            # -------------------------------------------------
+            # EL MONTO DE UNA ORDEN SIEMPRE ES SU TOTAL
+            # -------------------------------------------------
+
             amount = order["total_price"]
 
         # -----------------------------------------------------
-        # CREAR
+        # PREPARAR MOVIMIENTO
         # -----------------------------------------------------
 
         movement_data = data.model_dump(
@@ -133,19 +169,27 @@ class CashMovementService(BaseService):
 
             movement_data["date"] = datetime.now()
 
+        # -----------------------------------------------------
+        # CREAR MOVIMIENTO
+        # -----------------------------------------------------
+
         return await self.repository.create(
             movement_data
         )
 
-    # ---------------------------------------------------------
+    # =========================================================
     # UPDATE
-    # ---------------------------------------------------------
+    # =========================================================
 
     async def update(
         self,
         movement_id,
         data
     ):
+
+        # -----------------------------------------------------
+        # OBTENER MOVIMIENTO ANTERIOR
+        # -----------------------------------------------------
 
         old = await self.repository.get_by_id(
             movement_id
@@ -157,10 +201,18 @@ class CashMovementService(BaseService):
                 "Movimiento de caja no encontrado"
             )
 
+        # -----------------------------------------------------
+        # DATOS A ACTUALIZAR
+        # -----------------------------------------------------
+
         update_data = data.model_dump(
             exclude_none=True,
             exclude_unset=True
         )
+
+        # -----------------------------------------------------
+        # VALIDAR MONTO
+        # -----------------------------------------------------
 
         if "amount" in update_data:
 
@@ -170,31 +222,23 @@ class CashMovementService(BaseService):
                     "El valor debe ser mayor a 0"
                 )
 
-        if "type" in update_data:
+        # =====================================================
+        # VALIDAR ORDEN
+        # =====================================================
 
-            if update_data["type"] not in [
-                "inflow",
-                "outflow"
-            ]:
-
-                raise NotFoundException(
-                    "Tipo de movimiento no válido"
-                )
-
-        # Si cambia la orden, tomar su total
         if "order_id" in update_data:
 
             if update_data["order_id"]:
 
                 try:
 
-                    object_id_order = validate_object_id(
+                    validate_object_id(
                         update_data["order_id"]
                     )
 
                     order = (
                         await self.order_repository.get_by_id(
-                            object_id_order
+                            update_data["order_id"]
                         )
                     )
 
@@ -204,26 +248,69 @@ class CashMovementService(BaseService):
                         "No se encontró la orden correspondiente al ID"
                     )
 
+                if not order:
+
+                    raise NotFoundException(
+                        "No se encontró la orden correspondiente al ID"
+                    )
+
+                # ---------------------------------------------
+                # DETERMINAR CAJA
+                # ---------------------------------------------
+
+                selected_cash_register_id = (
+                    update_data.get(
+                        "cash_register_id",
+                        old.get("cash_register_id")
+                    )
+                )
+
+                order_cash_register_id = (
+                    order.get("cash_register_id")
+                )
+
+                if (
+                    order_cash_register_id
+                    and
+                    str(order_cash_register_id)
+                    != str(selected_cash_register_id)
+                ):
+
+                    raise NotFoundException(
+                        "La orden no pertenece "
+                        "a la caja seleccionada"
+                    )
+
                 update_data["amount"] = (
                     order["total_price"]
                 )
 
-        # Si se modifica cash_register_id,
-        # verificar que la nueva caja esté abierta.
+        # =====================================================
+        # VALIDAR CAJA
+        # =====================================================
+
         if "cash_register_id" in update_data:
 
             try:
 
-                object_id_cash = validate_object_id(
+                validate_object_id(
                     update_data["cash_register_id"]
                 )
 
                 cash_register = (
                     await self.cash_register_repository
-                    .get_by_id(object_id_cash)
+                    .get_by_id(
+                        update_data["cash_register_id"]
+                    )
                 )
 
             except NotFoundException:
+
+                raise NotFoundException(
+                    "No se encontró la caja correspondiente al ID"
+                )
+
+            if not cash_register:
 
                 raise NotFoundException(
                     "No se encontró la caja correspondiente al ID"
@@ -237,6 +324,10 @@ class CashMovementService(BaseService):
                 raise NotFoundException(
                     "La caja seleccionada está cerrada"
                 )
+
+        # -----------------------------------------------------
+        # ACTUALIZAR
+        # -----------------------------------------------------
 
         return await self.repository.update(
             movement_id,

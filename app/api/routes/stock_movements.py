@@ -33,7 +33,7 @@ async def create_stock_movement(data : StockMovementCreate):
     return await service.create(data )
 
 @router.put(
-    "/",
+    "/{stock_movement_id}",
     response_model=StockMovementResponse
 )
 async def update_stock_movement(stock_movement_id : str ,data : StockMovementUpdate):

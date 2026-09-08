@@ -1,24 +1,28 @@
+from datetime import datetime
+
 from pydantic import BaseModel
 
-from datetime import datetime
+from app.schema.base_schema import MongoModel
+
+from app.schema.payment_schema import (
+    PaymentMethod,
+    CashMovementType
+)
 
 
 class CashMovementCreate(BaseModel):
 
     cash_register_id: str
 
-    # Orden relacionada, si corresponde
     order_id: str | None = None
 
-    # inflow / outflow
-    type: str
+    type: CashMovementType
 
-    # sale / expense / withdrawal / refund...
     category: str
 
     amount: float
 
-    method_payment: str
+    method_payment: PaymentMethod
 
     description: str
 
@@ -33,13 +37,13 @@ class CashMovementUpdate(BaseModel):
 
     order_id: str | None = None
 
-    type: str | None = None
+    type: CashMovementType | None = None
 
     category: str | None = None
 
     amount: float | None = None
 
-    method_payment: str | None = None
+    method_payment: PaymentMethod | None = None
 
     description: str | None = None
 
@@ -48,24 +52,9 @@ class CashMovementUpdate(BaseModel):
     status: bool | None = None
 
 
-class CashMovementResponse(BaseModel):
+class CashMovementResponse(
+    CashMovementCreate,
+    MongoModel
+):
 
-    id: str
-
-    cash_register_id: str
-
-    order_id: str | None = None
-
-    type: str
-
-    category: str
-
-    amount: float
-
-    method_payment: str
-
-    description: str
-
-    date: datetime
-
-    status: bool
+    pass

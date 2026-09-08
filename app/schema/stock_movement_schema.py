@@ -7,15 +7,12 @@ class StockMovementCreate(BaseModel):
 
     product_id: str
 
-    # inflow = ingreso
-    # outflow = egreso
     type: str
 
     description: str
 
     quantity: int
 
-    # Orden que originó el movimiento
     order_id: str | None = None
 
     status: bool = True
@@ -40,4 +37,5 @@ class StockMovementResponse(
     StockMovementCreate,
     MongoModel
 ):
+
     pass

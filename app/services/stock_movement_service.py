@@ -11,7 +11,9 @@ from app.repositories.product_repository import (
 from app.utils.exceptions import NotFoundException
 
 
-class StockMovementService(BaseService):
+class StockMovementService(
+    BaseService
+):
 
     def __init__(self):
 
@@ -19,11 +21,13 @@ class StockMovementService(BaseService):
 
         self.product_repository = ProductRepository()
 
-        super().__init__(self.repository)
+        super().__init__(
+            self.repository
+        )
 
-    # ---------------------------------------------------------
+    # =========================================================
     # EFFECT
-    # ---------------------------------------------------------
+    # =========================================================
 
     def _effect(
         self,
@@ -43,11 +47,14 @@ class StockMovementService(BaseService):
             "Tipo de movimiento no válido"
         )
 
-    # ---------------------------------------------------------
+    # =========================================================
     # CREATE
-    # ---------------------------------------------------------
+    # =========================================================
 
-    async def create(self, data):
+    async def create(
+        self,
+        data
+    ):
 
         if data.quantity <= 0:
 
@@ -64,8 +71,14 @@ class StockMovementService(BaseService):
                 "Tipo de movimiento no válido"
             )
 
-        product = await self.product_repository.get_by_id(
-            data.product_id
+        # -----------------------------------------------------
+        # PRODUCTO
+        # -----------------------------------------------------
+
+        product = (
+            await self.product_repository.get_by_id(
+                data.product_id
+            )
         )
 
         if not product:
@@ -74,13 +87,18 @@ class StockMovementService(BaseService):
                 "Producto no encontrado"
             )
 
+        # -----------------------------------------------------
+        # CALCULAR EFECTO
+        # -----------------------------------------------------
+
         effect = self._effect(
             data.type,
             data.quantity
         )
 
         new_quantity = (
-            product["quantity"] + effect
+            product["quantity"]
+            + effect
         )
 
         if new_quantity < 0:
@@ -91,13 +109,20 @@ class StockMovementService(BaseService):
                 f"Disponible: {product['quantity']}"
             )
 
-        # Actualizar stock
+        # -----------------------------------------------------
+        # ACTUALIZAR STOCK
+        # -----------------------------------------------------
+
         await self.product_repository.update(
             data.product_id,
             {
                 "quantity": new_quantity
             }
         )
+
+        # -----------------------------------------------------
+        # CREAR MOVIMIENTO
+        # -----------------------------------------------------
 
         movement_data = data.model_dump(
             exclude_none=True
@@ -107,15 +132,19 @@ class StockMovementService(BaseService):
             movement_data
         )
 
-    # ---------------------------------------------------------
+    # =========================================================
     # UPDATE
-    # ---------------------------------------------------------
+    # =========================================================
 
     async def update(
         self,
         movement_id,
         data
     ):
+
+        # -----------------------------------------------------
+        # OBTENER MOVIMIENTO ANTERIOR
+        # -----------------------------------------------------
 
         old = await self.repository.get_by_id(
             movement_id
@@ -138,6 +167,10 @@ class StockMovementService(BaseService):
             old_quantity
         )
 
+        # -----------------------------------------------------
+        # NUEVOS VALORES
+        # -----------------------------------------------------
+
         new_product_id = (
             data.product_id
             if data.product_id is not None
@@ -156,6 +189,10 @@ class StockMovementService(BaseService):
             else old_quantity
         )
 
+        # -----------------------------------------------------
+        # VALIDACIONES
+        # -----------------------------------------------------
+
         if new_quantity <= 0:
 
             raise NotFoundException(
@@ -171,8 +208,14 @@ class StockMovementService(BaseService):
                 "Tipo de movimiento no válido"
             )
 
-        old_product = await self.product_repository.get_by_id(
-            old_product_id
+        # -----------------------------------------------------
+        # PRODUCTO ANTERIOR
+        # -----------------------------------------------------
+
+        old_product = (
+            await self.product_repository.get_by_id(
+                old_product_id
+            )
         )
 
         if not old_product:
@@ -181,7 +224,10 @@ class StockMovementService(BaseService):
                 "Producto anterior no encontrado"
             )
 
-        # Revertir movimiento anterior
+        # -----------------------------------------------------
+        # REVERTIR MOVIMIENTO ANTERIOR
+        # -----------------------------------------------------
+
         old_product_quantity = (
             old_product["quantity"]
             - old_effect
@@ -193,9 +239,9 @@ class StockMovementService(BaseService):
                 "No se puede revertir el movimiento"
             )
 
-        # -----------------------------------------------------
+        # =====================================================
         # MISMO PRODUCTO
-        # -----------------------------------------------------
+        # =====================================================
 
         if old_product_id == new_product_id:
 
@@ -223,14 +269,16 @@ class StockMovementService(BaseService):
                 }
             )
 
-        # -----------------------------------------------------
+        # =====================================================
         # PRODUCTO DIFERENTE
-        # -----------------------------------------------------
+        # =====================================================
 
         else:
 
-            new_product = await self.product_repository.get_by_id(
-                new_product_id
+            new_product = (
+                await self.product_repository.get_by_id(
+                    new_product_id
+                )
             )
 
             if not new_product:
@@ -239,13 +287,20 @@ class StockMovementService(BaseService):
                     "Nuevo producto no encontrado"
                 )
 
-            # Restaurar producto anterior
+            # -------------------------------------------------
+            # RESTAURAR PRODUCTO ANTERIOR
+            # -------------------------------------------------
+
             await self.product_repository.update(
                 old_product_id,
                 {
                     "quantity": old_product_quantity
                 }
             )
+
+            # -------------------------------------------------
+            # APLICAR NUEVO MOVIMIENTO
+            # -------------------------------------------------
 
             new_effect = self._effect(
                 new_type,
@@ -279,7 +334,10 @@ class StockMovementService(BaseService):
                 }
             )
 
-        # Actualizar documento del movimiento
+        # -----------------------------------------------------
+        # ACTUALIZAR MOVIMIENTO
+        # -----------------------------------------------------
+
         update_data = data.model_dump(
             exclude_none=True,
             exclude_unset=True
