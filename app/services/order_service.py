@@ -1,4 +1,4 @@
-from datetime import datetime
+from app.utils.dateZone import DateUtils
 
 from app.services.base_service import BaseService
 
@@ -202,7 +202,10 @@ class OrderService(BaseService):
         # -----------------------------------------------------
         # DATOS DE LA ORDEN
         # -----------------------------------------------------
+        date = DateUtils.now_argentina()
 
+        print("FECHA ARGENTINA:", date)
+        print("TIMEZONE:", date.tzinfo)
         order_data = {
             "order_number": data.order_number,
             "customer_name": data.customer_name,
@@ -210,7 +213,7 @@ class OrderService(BaseService):
             "total_price": total_price,
             "method_payment": data.method_payment,
             "status_payment": data.status_payment,
-            "created_at": datetime.now(),
+            "created_at": date,
             "delivery_time": data.delivery_time,
             "cash_register_id": data.cash_register_id,
             "status": data.status
@@ -219,11 +222,9 @@ class OrderService(BaseService):
         # -----------------------------------------------------
         # CREAR ORDEN
         # -----------------------------------------------------
-
         order = await self.repository.create(
             order_data
         )
-
         # -----------------------------------------------------
         # DESCONTAR STOCK
         # -----------------------------------------------------
@@ -322,7 +323,7 @@ class OrderService(BaseService):
                 f"Venta pedido #{order['order_number']}"
             ),
 
-            date=datetime.now(),
+            date=DateUtils.now_argentina(),
 
             status=True
         )
@@ -536,7 +537,7 @@ class OrderService(BaseService):
                 f"Reembolso pedido #{order['order_number']}"
             ),
 
-            date=datetime.now(),
+            date=DateUtils.now_argentina(),
 
             status=True
         )

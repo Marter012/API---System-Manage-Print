@@ -1,4 +1,4 @@
-from datetime import datetime
+from app.utils.dateZone import DateUtils
 
 from app.services.base_service import BaseService
 
@@ -369,7 +369,7 @@ class CashRegisterService(BaseService):
             if "closed_at" not in update_data:
 
                 update_data["closed_at"] = (
-                    datetime.now()
+                    DateUtils.now_argentina()
                 )
 
         # =====================================================

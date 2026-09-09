@@ -1,4 +1,4 @@
-from datetime import datetime
+from app.utils.dateZone import DateUtils
 
 from app.services.base_service import BaseService
 
@@ -167,7 +167,7 @@ class CashMovementService(
 
         if not movement_data.get("date"):
 
-            movement_data["date"] = datetime.now()
+            movement_data["date"] = DateUtils.now_argentina()
 
         # -----------------------------------------------------
         # CREAR MOVIMIENTO
