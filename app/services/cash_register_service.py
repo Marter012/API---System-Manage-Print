@@ -56,19 +56,6 @@ class CashRegisterService(BaseService):
 
         # -----------------------------------------------------
         # VALIDAR QUE NO EXISTA OTRA CAJA ABIERTA
-        #
-        # Solo puede existir UNA caja abierta en todo el sistema.
-        #
-        # Ejemplo:
-        #
-        # 08/09/2026 - morning → abierta
-        #
-        # Intentar:
-        #
-        # 09/09/2026 - morning → ❌
-        # 09/09/2026 - night   → ❌
-        #
-        # Primero hay que cerrar la caja anterior.
         # -----------------------------------------------------
 
         open_cash_register = (
@@ -107,13 +94,6 @@ class CashRegisterService(BaseService):
 
         # -----------------------------------------------------
         # VALIDAR DUPLICADO DE FECHA + TURNO
-        #
-        # Esta validación sigue siendo necesaria aunque la caja
-        # anterior esté cerrada.
-        #
-        # No permitimos dos registros para:
-        #
-        # misma fecha + mismo turno
         # -----------------------------------------------------
 
         existing_cash_register = (
@@ -193,7 +173,7 @@ class CashRegisterService(BaseService):
             )
 
         # -----------------------------------------------------
-        # NO PERMITIR REABRIR UNA CAJA CERRADA
+        # ESTADO ACTUAL
         # -----------------------------------------------------
 
         current_status = cash_register.get(
@@ -202,6 +182,10 @@ class CashRegisterService(BaseService):
 
         requested_status = data.status_cash_register
 
+        # -----------------------------------------------------
+        # NO PERMITIR REABRIR
+        # -----------------------------------------------------
+
         if (
             current_status == "close"
             and requested_status == "open"
@@ -209,6 +193,19 @@ class CashRegisterService(BaseService):
 
             raise NotFoundException(
                 "Una caja cerrada no puede volver a abrirse."
+            )
+
+        # -----------------------------------------------------
+        # NO PERMITIR CERRAR UNA CAJA YA CERRADA
+        # -----------------------------------------------------
+
+        if (
+            current_status == "close"
+            and requested_status == "close"
+        ):
+
+            raise NotFoundException(
+                "La caja ya se encuentra cerrada."
             )
 
         # -----------------------------------------------------
@@ -274,17 +271,18 @@ class CashRegisterService(BaseService):
             if closing_amount is None:
 
                 raise NotFoundException(
-                    "Debe indicar el monto de cierre de la caja."
+                    "Debe indicar el efectivo contado "
+                    "al cerrar la caja."
                 )
 
             if closing_amount < 0:
 
                 raise NotFoundException(
-                    "El monto de cierre no puede ser negativo."
+                    "El efectivo de cierre no puede ser negativo."
                 )
 
             # -------------------------------------------------
-            # OBTENER MOVIMIENTOS
+            # OBTENER MOVIMIENTOS DE LA CAJA
             # -------------------------------------------------
 
             movements = (
@@ -294,77 +292,247 @@ class CashRegisterService(BaseService):
                 )
             )
 
-            # -------------------------------------------------
-            # CALCULAR EFECTIVO ESPERADO
-            #
-            # IMPORTANTE:
-            #
-            # Solo los movimientos en efectivo afectan el
-            # efectivo físico de la caja.
-            #
-            # QR
-            # Transferencia
-            # Débito
-            # Mercado Pago
-            #
-            # NO se suman al efectivo esperado.
-            # -------------------------------------------------
+            # =================================================
+            # VARIABLES DEL RESUMEN
+            # =================================================
 
-            opening_amount = cash_register.get(
-                "opening_amount",
-                0
-            )
+            sales_total = 0
 
-            expected_amount = opening_amount
+            sales_cash = 0
+
+            sales_transfer = 0
+
+            sales_qr = 0
+
+            sales_debit_card = 0
+
+            manual_income = 0
+
+            manual_expense = 0
+
+            manual_income_cash = 0
+
+            manual_expense_cash = 0
+
+            # =================================================
+            # RECORRER MOVIMIENTOS
+            # =================================================
 
             for movement in movements:
-
-                method_payment = movement.get(
-                    "method_payment"
-                )
-
-                # Solo efectivo modifica el efectivo físico.
-
-                if method_payment != "cash":
-                    continue
 
                 amount = movement.get(
                     "amount",
                     0
-                )
+                ) or 0
 
                 movement_type = movement.get(
                     "type"
                 )
 
+                method_payment = movement.get(
+                    "method_payment"
+                )
+
+                order_id = movement.get(
+                    "order_id"
+                )
+
+                # =================================================
+                # VENTA / COMANDA
+                #
+                # Una venta se identifica por tener order_id.
+                # =================================================
+
+                is_sale = bool(order_id)
+
+                if is_sale:
+
+                    # -------------------------------------------------
+                    # SOLO LOS INFLOWS REPRESENTAN LA VENTA
+                    # -------------------------------------------------
+
+                    if movement_type != "inflow":
+                        continue
+
+                    sales_total += amount
+
+                    # -------------------------------------------------
+                    # VENTA EN EFECTIVO
+                    # -------------------------------------------------
+
+                    if method_payment == "cash":
+
+                        sales_cash += amount
+
+                    # -------------------------------------------------
+                    # VENTA POR TRANSFERENCIA
+                    # -------------------------------------------------
+
+                    elif method_payment == "transfer":
+
+                        sales_transfer += amount
+
+                    # -------------------------------------------------
+                    # VENTA POR QR
+                    # -------------------------------------------------
+
+                    elif method_payment == "qr":
+
+                        sales_qr += amount
+
+                    # -------------------------------------------------
+                    # VENTA POR DÉBITO
+                    # -------------------------------------------------
+
+                    elif method_payment == "debit_card":
+
+                        sales_debit_card += amount
+
+                    continue
+
+                # =================================================
+                # MOVIMIENTO MANUAL
+                #
+                # No tiene order_id.
+                # =================================================
+
                 if movement_type == "inflow":
 
-                    expected_amount += amount
+                    # -------------------------------------------------
+                    # TOTAL GENERAL DE INGRESOS MANUALES
+                    # -------------------------------------------------
+
+                    manual_income += amount
+
+                    # -------------------------------------------------
+                    # INGRESO MANUAL EN EFECTIVO
+                    # -------------------------------------------------
+
+                    if method_payment == "cash":
+
+                        manual_income_cash += amount
 
                 elif movement_type == "outflow":
 
-                    expected_amount -= amount
+                    # -------------------------------------------------
+                    # TOTAL GENERAL DE EGRESOS MANUALES
+                    # -------------------------------------------------
 
-            # -------------------------------------------------
-            # CALCULAR DIFERENCIA
-            # -------------------------------------------------
+                    manual_expense += amount
+
+                    # -------------------------------------------------
+                    # EGRESO MANUAL EN EFECTIVO
+                    # -------------------------------------------------
+
+                    if method_payment == "cash":
+
+                        manual_expense_cash += amount
+
+            # =====================================================
+            # EFECTIVO ESPERADO
+            #
+            # SOLO DINERO FÍSICO:
+            #
+            # apertura
+            # + ventas en efectivo
+            # + ingresos manuales en efectivo
+            # - egresos manuales en efectivo
+            #
+            # Transferencia, QR y débito NO afectan el efectivo.
+            # =====================================================
+
+            opening_amount = cash_register.get(
+                "opening_amount",
+                0
+            ) or 0
+
+            expected_amount = (
+                opening_amount
+                + sales_cash
+                + manual_income_cash
+                - manual_expense_cash
+            )
+
+            # =====================================================
+            # DIFERENCIA
+            #
+            # Lo contado físicamente
+            # menos lo que debería haber.
+            # =====================================================
 
             difference = (
                 closing_amount
                 - expected_amount
             )
 
+            # =====================================================
+            # GUARDAR RESUMEN DE VENTAS
+            # =====================================================
+
+            update_data["sales_total"] = (
+                sales_total
+            )
+
+            update_data["sales_cash"] = (
+                sales_cash
+            )
+
+            update_data["sales_transfer"] = (
+                sales_transfer
+            )
+
+            update_data["sales_qr"] = (
+                sales_qr
+            )
+
+            update_data["sales_debit_card"] = (
+                sales_debit_card
+            )
+
+            # =====================================================
+            # GUARDAR RESUMEN DE MOVIMIENTOS MANUALES
+            # =====================================================
+
+            update_data["manual_income"] = (
+                manual_income
+            )
+
+            update_data["manual_expense"] = (
+                manual_expense
+            )
+
+            # =====================================================
+            # GUARDAR SOLO LOS MOVIMIENTOS MANUALES
+            # QUE AFECTARON EL EFECTIVO
+            # =====================================================
+
+            update_data["manual_income_cash"] = (
+                manual_income_cash
+            )
+
+            update_data["manual_expense_cash"] = (
+                manual_expense_cash
+            )
+
+            # =====================================================
+            # GUARDAR EFECTIVO ESPERADO
+            # =====================================================
+
             update_data["expected_amount"] = (
                 expected_amount
             )
+
+            # =====================================================
+            # GUARDAR DIFERENCIA
+            # =====================================================
 
             update_data["difference"] = (
                 difference
             )
 
-            # -------------------------------------------------
+            # =====================================================
             # FECHA DE CIERRE
-            # -------------------------------------------------
+            # =====================================================
 
             if "closed_at" not in update_data:
 
@@ -377,9 +545,6 @@ class CashRegisterService(BaseService):
         # =====================================================
 
         if current_status == "open":
-
-            # Si se intenta cambiar la fecha o turno de una
-            # caja abierta, verificamos que no genere conflictos.
 
             new_date = update_data.get(
                 "date",
@@ -420,9 +585,9 @@ class CashRegisterService(BaseService):
                         f"del turno {new_shift}."
                     )
 
-        # -----------------------------------------------------
+        # =====================================================
         # ACTUALIZAR
-        # -----------------------------------------------------
+        # =====================================================
 
         return await self.repository.update(
             cash_register_id,
