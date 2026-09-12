@@ -38,27 +38,23 @@ class CashMovementService(
         )
 
     # =========================================================
-    # CREATE
+    # VALIDAR CAJA
     # =========================================================
 
-    async def create(
+    async def _get_cash_register(
         self,
-        data
+        cash_register_id
     ):
-
-        # -----------------------------------------------------
-        # VALIDAR CAJA
-        # -----------------------------------------------------
 
         try:
 
             validate_object_id(
-                data.cash_register_id
+                cash_register_id
             )
 
             cash_register = (
                 await self.cash_register_repository.get_by_id(
-                    data.cash_register_id
+                    cash_register_id
                 )
             )
 
@@ -74,10 +70,6 @@ class CashMovementService(
                 "No se encontró la caja correspondiente al ID"
             )
 
-        # -----------------------------------------------------
-        # VERIFICAR ESTADO DE CAJA
-        # -----------------------------------------------------
-
         if (
             cash_register["status_cash_register"]
             != "open"
@@ -88,15 +80,52 @@ class CashMovementService(
                 "en una caja cerrada"
             )
 
+        return cash_register
+
+    # =========================================================
+    # CREATE
+    # =========================================================
+
+    async def create(
+        self,
+        data
+    ):
+
+        # -----------------------------------------------------
+        # VALIDAR CAJA
+        # -----------------------------------------------------
+
+        cash_register = (
+            await self._get_cash_register(
+                data.cash_register_id
+            )
+        )
+
         # -----------------------------------------------------
         # VALIDAR MONTO
+        #
+        # Movimiento manual:
+        #       amount > 0
+        #
+        # Movimiento de orden:
+        #       amount >= 0
         # -----------------------------------------------------
 
-        if data.amount <= 0:
+        if data.order_id:
 
-            raise NotFoundException(
-                "El valor debe ser mayor a 0"
-            )
+            if data.amount < 0:
+
+                raise NotFoundException(
+                    "El valor no puede ser negativo"
+                )
+
+        else:
+
+            if data.amount <= 0:
+
+                raise NotFoundException(
+                    "El valor debe ser mayor a 0"
+                )
 
         amount = data.amount
 
@@ -121,13 +150,15 @@ class CashMovementService(
             except NotFoundException:
 
                 raise NotFoundException(
-                    "No se encontró la orden correspondiente al ID"
+                    "No se encontró la orden correspondiente "
+                    "al ID"
                 )
 
             if not order:
 
                 raise NotFoundException(
-                    "No se encontró la orden correspondiente al ID"
+                    "No se encontró la orden correspondiente "
+                    "al ID"
                 )
 
             # -------------------------------------------------
@@ -150,10 +181,15 @@ class CashMovementService(
                 )
 
             # -------------------------------------------------
-            # EL MONTO DE UNA ORDEN SIEMPRE ES SU TOTAL
+            # IMPORTANTE:
+            #
+            # NO reemplazamos amount por total_price.
+            #
+            # La orden puede tener:
+            #
+            # pending -> 0
+            # paid    -> total
             # -------------------------------------------------
-
-            amount = order["total_price"]
 
         # -----------------------------------------------------
         # PREPARAR MOVIMIENTO
@@ -167,7 +203,9 @@ class CashMovementService(
 
         if not movement_data.get("date"):
 
-            movement_data["date"] = DateUtils.now_argentina()
+            movement_data["date"] = (
+                DateUtils.now_argentina()
+            )
 
         # -----------------------------------------------------
         # CREAR MOVIMIENTO
@@ -187,10 +225,6 @@ class CashMovementService(
         data
     ):
 
-        # -----------------------------------------------------
-        # OBTENER MOVIMIENTO ANTERIOR
-        # -----------------------------------------------------
-
         old = await self.repository.get_by_id(
             movement_id
         )
@@ -200,10 +234,6 @@ class CashMovementService(
             raise NotFoundException(
                 "Movimiento de caja no encontrado"
             )
-
-        # -----------------------------------------------------
-        # DATOS A ACTUALIZAR
-        # -----------------------------------------------------
 
         update_data = data.model_dump(
             exclude_none=True,
@@ -216,11 +246,21 @@ class CashMovementService(
 
         if "amount" in update_data:
 
-            if update_data["amount"] <= 0:
+            if old.get("order_id"):
 
-                raise NotFoundException(
-                    "El valor debe ser mayor a 0"
-                )
+                if update_data["amount"] < 0:
+
+                    raise NotFoundException(
+                        "El valor no puede ser negativo"
+                    )
+
+            else:
+
+                if update_data["amount"] <= 0:
+
+                    raise NotFoundException(
+                        "El valor debe ser mayor a 0"
+                    )
 
         # =====================================================
         # VALIDAR ORDEN
@@ -245,18 +285,16 @@ class CashMovementService(
                 except NotFoundException:
 
                     raise NotFoundException(
-                        "No se encontró la orden correspondiente al ID"
+                        "No se encontró la orden correspondiente "
+                        "al ID"
                     )
 
                 if not order:
 
                     raise NotFoundException(
-                        "No se encontró la orden correspondiente al ID"
+                        "No se encontró la orden correspondiente "
+                        "al ID"
                     )
-
-                # ---------------------------------------------
-                # DETERMINAR CAJA
-                # ---------------------------------------------
 
                 selected_cash_register_id = (
                     update_data.get(
@@ -281,49 +319,15 @@ class CashMovementService(
                         "a la caja seleccionada"
                     )
 
-                update_data["amount"] = (
-                    order["total_price"]
-                )
-
         # =====================================================
         # VALIDAR CAJA
         # =====================================================
 
         if "cash_register_id" in update_data:
 
-            try:
-
-                validate_object_id(
-                    update_data["cash_register_id"]
-                )
-
-                cash_register = (
-                    await self.cash_register_repository
-                    .get_by_id(
-                        update_data["cash_register_id"]
-                    )
-                )
-
-            except NotFoundException:
-
-                raise NotFoundException(
-                    "No se encontró la caja correspondiente al ID"
-                )
-
-            if not cash_register:
-
-                raise NotFoundException(
-                    "No se encontró la caja correspondiente al ID"
-                )
-
-            if (
-                cash_register["status_cash_register"]
-                != "open"
-            ):
-
-                raise NotFoundException(
-                    "La caja seleccionada está cerrada"
-                )
+            await self._get_cash_register(
+                update_data["cash_register_id"]
+            )
 
         # -----------------------------------------------------
         # ACTUALIZAR
@@ -331,5 +335,129 @@ class CashMovementService(
 
         return await self.repository.update(
             movement_id,
+            update_data
+        )
+
+    # =========================================================
+    # ACTUALIZAR MOVIMIENTO DE UNA ORDEN
+    # =========================================================
+
+    async def update_order_movement(
+        self,
+        order_id,
+        amount,
+        method_payment,
+        cash_register_id
+    ):
+
+        # -----------------------------------------------------
+        # VALIDAR CAJA
+        # -----------------------------------------------------
+
+        cash_register = (
+            await self._get_cash_register(
+                cash_register_id
+            )
+        )
+
+        # -----------------------------------------------------
+        # VALIDAR ORDEN
+        # -----------------------------------------------------
+
+        try:
+
+            validate_object_id(
+                order_id
+            )
+
+            order = (
+                await self.order_repository.get_by_id(
+                    order_id
+                )
+            )
+
+        except NotFoundException:
+
+            raise NotFoundException(
+                "No se encontró la orden correspondiente "
+                "al ID"
+            )
+
+        if not order:
+
+            raise NotFoundException(
+                "No se encontró la orden correspondiente "
+                "al ID"
+            )
+
+        # -----------------------------------------------------
+        # VERIFICAR CAJA
+        # -----------------------------------------------------
+
+        order_cash_register_id = (
+            order.get("cash_register_id")
+        )
+
+        if (
+            order_cash_register_id
+            and
+            str(order_cash_register_id)
+            != str(cash_register_id)
+        ):
+
+            raise NotFoundException(
+                "La orden no pertenece "
+                "a la caja seleccionada"
+            )
+
+        # -----------------------------------------------------
+        # VALIDAR MONTO
+        # -----------------------------------------------------
+
+        if amount < 0:
+
+            raise NotFoundException(
+                "El valor no puede ser negativo"
+            )
+
+        # -----------------------------------------------------
+        # BUSCAR MOVIMIENTO DE LA ORDEN
+        # -----------------------------------------------------
+
+        movement = (
+            await self.repository.get_by_order_id(
+                order_id
+            )
+        )
+
+        if not movement:
+
+            raise NotFoundException(
+                "No se encontró el movimiento "
+                "de la orden"
+            )
+
+        # -----------------------------------------------------
+        # ACTUALIZAR MOVIMIENTO
+        # -----------------------------------------------------
+
+        update_data = {
+
+            "amount": amount,
+
+            "method_payment": method_payment,
+
+            "cash_register_id": str(
+                cash_register["id"]
+            ),
+
+            "description": (
+                f"Venta pedido "
+                f"#{order['order_number']}"
+            )
+        }
+
+        return await self.repository.update(
+            movement["id"],
             update_data
         )
