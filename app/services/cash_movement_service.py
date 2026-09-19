@@ -425,7 +425,7 @@ class CashMovementService(
         # -----------------------------------------------------
 
         movement = (
-            await self.repository.get_by_order_id(
+            await self.repository.get_sale_by_order_id(
                 order_id
             )
         )
@@ -460,4 +460,46 @@ class CashMovementService(
         return await self.repository.update(
             movement["id"],
             update_data
+        )
+
+    # =========================================================
+    # DESACTIVAR MOVIMIENTO DE UNA ORDEN
+    # =========================================================
+
+    async def deactivate_order_movement(
+        self,
+        order_id
+    ):
+
+        try:
+
+            validate_object_id(
+                order_id
+            )
+
+        except NotFoundException:
+
+            raise NotFoundException(
+                "No se encontró la orden correspondiente "
+                "al ID"
+            )
+
+        movement = (
+            await self.repository.get_sale_by_order_id(
+                order_id
+            )
+        )
+
+        if not movement:
+
+            raise NotFoundException(
+                "No se encontró el movimiento de venta "
+                "de la orden"
+            )
+
+        return await self.repository.update(
+            movement["id"],
+            {
+                "status": False
+            }
         )

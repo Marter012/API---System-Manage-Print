@@ -6,6 +6,7 @@ client = AsyncIOMotorClient(settings.MONGO_URL)
 database = client[settings.DATABASE_NAME]
 
 products_collection = database["products"]
+promotions_collection = database["promotions"]
 orders_collection = database["orders"]
 order_item_collection = database["order_item"]
 stock_movement_collection = database["stock_movement"]

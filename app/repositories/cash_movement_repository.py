@@ -46,3 +46,43 @@ class CashMovementRepository(
             )
 
         return documents
+
+    async def get_by_order_id(
+        self,
+        order_id: str
+    ):
+
+        document = await self.collection.find_one(
+            {
+                "order_id": str(order_id)
+            }
+        )
+
+        if not document:
+
+            return None
+
+        return serialize_mongo(
+            document
+        )
+
+    async def get_sale_by_order_id(
+        self,
+        order_id: str
+    ):
+
+        document = await self.collection.find_one(
+            {
+                "order_id": str(order_id),
+                "type": "inflow",
+                "category": "sale"
+            }
+        )
+
+        if not document:
+
+            return None
+
+        return serialize_mongo(
+            document
+        )

@@ -2,7 +2,7 @@ from fastapi import FastAPI,HTTPException
 from fastapi.exceptions import RequestValidationError
 from app.utils.handlers import validation_exception_handler,http_exception_handler,general_exception_handler
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.routes import products,orders,cash_registers,stock_movements,cash_movements
+from app.api.routes import products,orders,cash_registers,stock_movements,cash_movements,promotions
 
 app = FastAPI(
     title= "Boutique de Sabores",
@@ -30,6 +30,7 @@ app.include_router(orders.router)
 app.include_router(stock_movements.router)
 app.include_router(cash_registers.router)
 app.include_router(cash_movements.router)
+app.include_router(promotions.router)
 
 @app.get("/")
 def root():
