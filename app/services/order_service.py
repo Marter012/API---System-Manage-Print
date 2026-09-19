@@ -26,8 +26,6 @@ from app.database.connection import database
 
 from app.repositories.base_repository import BaseRepository
 
-from app.utils.serializers import serialize_mongo
-
 from app.schema.stock_movement_schema import (
     StockMovementCreate
 )
@@ -42,10 +40,6 @@ from app.utils.exceptions import NotFoundException
 class PromotionRepository(BaseRepository):
     """
     Repositorio local para promociones.
-
-    Se mantiene dentro de OrderService para que esta entrega sea
-    autocontenida: las promociones se almacenan en la colección
-    ``promotions`` y no generan un flujo de venta separado.
     """
 
     def __init__(self):
@@ -75,17 +69,20 @@ class OrderService(BaseService):
         super().__init__(self.repository)
 
     # =========================================================
-    # PROCESAR ITEMS (PRODUCTOS + PROMOCIONES)
+    # HELPERS
     # =========================================================
 
     @staticmethod
     def _value(item, name, default=None):
+
         if isinstance(item, dict):
             return item.get(name, default)
+
         return getattr(item, name, default)
 
     @staticmethod
     def _is_promotion_item(item):
+
         return bool(
             OrderService._value(item, "promotion_id")
             or OrderService._value(item, "type") == "promotion"
@@ -93,20 +90,54 @@ class OrderService(BaseService):
         )
 
     def _normalize_promotion_selections(self, item):
-        selections = self._value(item, "promotion_selections")
+
+        selections = self._value(
+            item,
+            "promotion_selections"
+        )
+
         if selections is None:
-            selections = self._value(item, "promotion_items")
+            selections = self._value(
+                item,
+                "promotion_items"
+            )
+
         if selections is None:
-            selections = self._value(item, "selections")
+            selections = self._value(
+                item,
+                "selections"
+            )
+
         if selections is None:
-            selections = self._value(item, "items")
+            selections = self._value(
+                item,
+                "items"
+            )
+
         return selections or []
 
     @staticmethod
-    def _selection_value(selection, name, default=None):
+    def _selection_value(
+        selection,
+        name,
+        default=None
+    ):
+
         if isinstance(selection, dict):
-            return selection.get(name, default)
-        return getattr(selection, name, default)
+            return selection.get(
+                name,
+                default
+            )
+
+        return getattr(
+            selection,
+            name,
+            default
+        )
+
+    # =========================================================
+    # VALIDAR SELECCIÓN DE PROMOCIÓN
+    # =========================================================
 
     async def _validate_promotion_selection(
         self,
@@ -116,201 +147,542 @@ class OrderService(BaseService):
         old_promotion_item=None
     ):
         """
-        Valida la composición concreta elegida para una promoción.
+        Valida la composición de una promoción.
 
-        Una promoción es una plantilla configurable. Cada entrada de
-        ``promotion.items`` puede ser: 
-        - fija: ``product_id`` + ``quantity``
-        - selección: ``quantity`` + ``product_ids`` y/o ``category``
+        IMPORTANTE:
 
-        La orden guarda la selección concreta para que el histórico no
-        dependa de futuras modificaciones de la promoción.
+        promotion.quantity = cantidad de promociones vendidas.
+
+        selection.quantity = cantidad de productos que contiene
+        UNA promoción.
+
+        Ejemplo:
+
+        Promoción:
+            12 empanadas
+
+        Orden:
+            quantity = 1
+
+        Selección:
+            quantity = 12
+
+        Stock utilizado:
+            12
+
+        Si se venden 2 promociones:
+
+            quantity = 2
+            selección = 12
+
+        Stock utilizado:
+            12 * 2 = 24
         """
-        template_items = promotion.get("items") or promotion.get("composition") or []
+
+        template_items = (
+            promotion.get("items")
+            or promotion.get("composition")
+            or []
+        )
+
         if not template_items:
-            raise NotFoundException("La promoción no tiene una composición configurada")
+
+            raise NotFoundException(
+                "La promoción no tiene una composición configurada"
+            )
 
         if not selections:
-            raise NotFoundException("Debe indicar la composición elegida para la promoción")
 
-        # Agrupamos la selección por group/index cuando existe.
+            raise NotFoundException(
+                "Debe indicar la composición elegida para la promoción"
+            )
+
+        # -----------------------------------------------------
+        # AGRUPAR SELECCIONES
+        # -----------------------------------------------------
+
         grouped = {}
+
         ungrouped = []
+
         for selection in selections:
-            group_index = self._selection_value(selection, "group_index")
+
+            group_index = self._selection_value(
+                selection,
+                "group_index"
+            )
+
             if group_index is None:
-                group_index = self._selection_value(selection, "composition_index")
+
+                group_index = self._selection_value(
+                    selection,
+                    "composition_index"
+                )
+
             if group_index is None:
+
                 ungrouped.append(selection)
+
             else:
-                grouped.setdefault(int(group_index), []).append(selection)
+
+                grouped.setdefault(
+                    int(group_index),
+                    []
+                ).append(selection)
 
         normalized = []
-        total_required = 0
+
+        # -----------------------------------------------------
+        # VALIDAR CADA GRUPO
+        # -----------------------------------------------------
 
         for index, rule in enumerate(template_items):
-            required = int(rule.get("quantity", 0))
-            if required <= 0:
-                raise NotFoundException(
-                    f"La composición de la promoción tiene una cantidad inválida en el grupo {index}"
+
+            required = int(
+                rule.get(
+                    "quantity",
+                    0
                 )
-            total_required += required
+            )
+
+            if required <= 0:
+
+                raise NotFoundException(
+                    "La composición de la promoción tiene "
+                    f"una cantidad inválida en el grupo {index}"
+                )
 
             group = grouped.get(index)
+
+            # -------------------------------------------------
+            # SI NO VIENE group_index
+            # -------------------------------------------------
+
             if group is None:
-                # Si no se usan índices, intentamos consumir las selecciones
-                # en orden hasta completar el grupo.
+
                 remaining = required
+
                 group = []
+
                 while ungrouped and remaining > 0:
+
                     candidate = ungrouped[0]
-                    qty = int(self._selection_value(candidate, "quantity", 0))
-                    if qty <= 0:
-                        raise NotFoundException("La cantidad seleccionada en una promoción debe ser mayor a 0")
-                    take = min(qty, remaining)
-                    if take == qty:
-                        group.append(ungrouped.pop(0))
+
+                    candidate_quantity = int(
+                        self._selection_value(
+                            candidate,
+                            "quantity",
+                            0
+                        )
+                    )
+
+                    if candidate_quantity <= 0:
+
+                        raise NotFoundException(
+                            "La cantidad seleccionada en una "
+                            "promoción debe ser mayor a 0"
+                        )
+
+                    take = min(
+                        candidate_quantity,
+                        remaining
+                    )
+
+                    if take == candidate_quantity:
+
+                        group.append(
+                            ungrouped.pop(0)
+                        )
+
                     else:
-                        # Se divide virtualmente la selección.
+
                         if isinstance(candidate, dict):
+
                             part = dict(candidate)
+
                         else:
+
                             part = {
-                                "product_id": self._selection_value(candidate, "product_id"),
+                                "product_id":
+                                    self._selection_value(
+                                        candidate,
+                                        "product_id"
+                                    ),
                                 "quantity": take
                             }
+
                         part["quantity"] = take
+
                         group.append(part)
+
                         if isinstance(candidate, dict):
-                            candidate["quantity"] = qty - take
-                        remaining = 0
-                        continue
+
+                            candidate["quantity"] = (
+                                candidate_quantity - take
+                            )
+
                     remaining -= take
+
                 if remaining > 0:
+
                     raise NotFoundException(
-                        f"La promoción '{promotion.get('name', 'sin nombre')}' requiere {required} unidades en el grupo {index}"
+                        f"La promoción "
+                        f"'{promotion.get('name', 'sin nombre')}' "
+                        f"requiere {required} unidades "
+                        f"en el grupo {index}"
                     )
+
+            # -------------------------------------------------
+            # VALIDAR PRODUCTOS DEL GRUPO
+            # -------------------------------------------------
 
             group_total = 0
-            allowed_ids = {str(x) for x in (rule.get("product_ids") or rule.get("allowed_product_ids") or [])}
-            fixed_product_id = rule.get("product_id")
-            allowed_category = rule.get("category")
+
+            allowed_ids = {
+                str(x)
+                for x in (
+                    rule.get("product_ids")
+                    or rule.get("allowed_product_ids")
+                    or []
+                )
+            }
+
+            fixed_product_id = rule.get(
+                "product_id"
+            )
+
+            allowed_category = rule.get(
+                "category"
+            )
 
             for selection in group:
-                product_id = self._selection_value(selection, "product_id")
-                quantity = int(self._selection_value(selection, "quantity", 0))
-                if not product_id or quantity <= 0:
-                    raise NotFoundException("Cada selección de una promoción debe indicar producto y cantidad válida")
 
-                product = await self.product_repository.get_by_id(product_id)
+                product_id = self._selection_value(
+                    selection,
+                    "product_id"
+                )
+
+                selection_quantity = int(
+                    self._selection_value(
+                        selection,
+                        "quantity",
+                        0
+                    )
+                )
+
+                if (
+                    not product_id
+                    or selection_quantity <= 0
+                ):
+
+                    raise NotFoundException(
+                        "Cada selección de una promoción debe "
+                        "indicar producto y cantidad válida"
+                    )
+
+                product = await self.product_repository.get_by_id(
+                    product_id
+                )
+
                 if not product:
-                    raise NotFoundException(f"El producto con ID {product_id} no existe")
+
+                    raise NotFoundException(
+                        f"El producto con ID "
+                        f"{product_id} no existe"
+                    )
+
                 if not product["status"]:
-                    raise NotFoundException(f"El producto '{product['name']}' está inactivo")
 
-                if fixed_product_id and str(fixed_product_id) != str(product_id):
                     raise NotFoundException(
-                        f"El producto '{product['name']}' no corresponde al grupo fijo de la promoción"
-                    )
-                if allowed_ids and str(product_id) not in allowed_ids:
-                    raise NotFoundException(
-                        f"El producto '{product['name']}' no está permitido en este grupo de la promoción"
-                    )
-                if allowed_category and str(product.get("category", "")).lower() != str(allowed_category).lower():
-                    raise NotFoundException(
-                        f"El producto '{product['name']}' no pertenece a la categoría permitida"
+                        f"El producto '{product['name']}' "
+                        "está inactivo"
                     )
 
-                group_total += quantity
+                if (
+                    fixed_product_id
+                    and str(fixed_product_id)
+                    != str(product_id)
+                ):
+
+                    raise NotFoundException(
+                        f"El producto '{product['name']}' "
+                        "no corresponde al grupo fijo "
+                        "de la promoción"
+                    )
+
+                if (
+                    allowed_ids
+                    and str(product_id)
+                    not in allowed_ids
+                ):
+
+                    raise NotFoundException(
+                        f"El producto '{product['name']}' "
+                        "no está permitido en este grupo "
+                        "de la promoción"
+                    )
+
+                if (
+                    allowed_category
+                    and str(
+                        product.get(
+                            "category",
+                            ""
+                        )
+                    ).lower()
+                    != str(
+                        allowed_category
+                    ).lower()
+                ):
+
+                    raise NotFoundException(
+                        f"El producto '{product['name']}' "
+                        "no pertenece a la categoría permitida"
+                    )
+
+                group_total += selection_quantity
 
                 normalized.append({
                     "group_index": index,
                     "product_id": product_id,
                     "name": product["name"],
-                    "quantity": quantity,
+                    "quantity": selection_quantity,
                     "unit_price": product["price"],
-                    "subtotal": product["price"] * quantity,
+                    "subtotal":
+                        product["price"]
+                        * selection_quantity,
                     "status": True
                 })
 
+            # -------------------------------------------------
+            # CANTIDAD DEL GRUPO
+            # -------------------------------------------------
+
             if group_total != required:
+
                 raise NotFoundException(
-                    f"El grupo {index} de la promoción requiere {required} unidades y se seleccionaron {group_total}"
+                    f"El grupo {index} de la promoción "
+                    f"requiere {required} unidades y "
+                    f"se seleccionaron {group_total}"
                 )
 
-        # Si quedaron selecciones sin consumir, hay una selección extra.
+        # -----------------------------------------------------
+        # NO PUEDE HABER SELECCIONES SOBRANTES
+        # -----------------------------------------------------
+
         if ungrouped:
-            raise NotFoundException("La promoción contiene más unidades de las permitidas")
 
-        # Stock adicional al editar. Se compara por producto usando la
-        # composición anterior de la misma promoción.
-        old_map = {}
-        if old_promotion_item:
-            old_multiplier = int(old_promotion_item.get("quantity", 1))
-            for selection in old_promotion_item.get("promotion_items", []):
-                pid = str(selection["product_id"])
-                old_map[pid] = (
-                    old_map.get(pid, 0)
-                    + int(selection["quantity"]) * old_multiplier
-                )
-        new_multiplier = int(quantity)
-        new_map = {}
-        for selection in normalized:
-            pid = str(selection["product_id"])
-            new_map[pid] = (
-                new_map.get(pid, 0)
-                + int(selection["quantity"]) * new_multiplier
+            raise NotFoundException(
+                "La promoción contiene más unidades "
+                "de las permitidas"
             )
 
-        for pid, qty in new_map.items():
-            additional = qty - old_map.get(pid, 0)
-            if additional > 0:
-                product = await self.product_repository.get_by_id(pid)
-                if product["quantity"] < additional:
-                    raise NotFoundException(
-                        f"No hay stock suficiente del producto: {product['name']}. "
-                        f"Disponible: {product['quantity']}, solicitado adicionalmente: {additional}"
-                    )
+        # =====================================================
+        # VALIDACIÓN DE STOCK
+        # =====================================================
+
+        old_map = {}
+
+        if old_promotion_item:
+
+            old_multiplier = int(
+                old_promotion_item.get(
+                    "quantity",
+                    1
+                )
+            )
+
+            for selection in old_promotion_item.get(
+                "promotion_items",
+                []
+            ):
+
+                pid = str(
+                    selection["product_id"]
+                )
+
+                old_map[pid] = (
+                    old_map.get(pid, 0)
+                    + int(
+                        selection["quantity"]
+                    ) * old_multiplier
+                )
+
+        new_multiplier = int(quantity)
+
+        new_map = {}
+
+        for selection in normalized:
+
+            pid = str(
+                selection["product_id"]
+            )
+
+            # Una selección representa los productos
+            # de UNA promoción.
+            #
+            # El multiplicador solamente se aplica si
+            # realmente se venden varias promociones.
+
+            required_stock = (
+                int(selection["quantity"])
+                * new_multiplier
+            )
+
+            new_map[pid] = (
+                new_map.get(pid, 0)
+                + required_stock
+            )
+
+        # -----------------------------------------------------
+        # VALIDAR STOCK ADICIONAL
+        # -----------------------------------------------------
+
+        for pid, required_quantity in new_map.items():
+
+            old_quantity = old_map.get(
+                pid,
+                0
+            )
+
+            additional = (
+                required_quantity
+                - old_quantity
+            )
+
+            if additional <= 0:
+                continue
+
+            product = await self.product_repository.get_by_id(
+                pid
+            )
+
+            if not product:
+
+                raise NotFoundException(
+                    f"El producto con ID {pid} no existe"
+                )
+
+            if product["quantity"] < additional:
+
+                raise NotFoundException(
+                    f"No hay stock suficiente del producto: "
+                    f"{product['name']}. "
+                    f"Disponible: {product['quantity']}, "
+                    f"solicitado adicionalmente: "
+                    f"{additional}"
+                )
 
         return normalized
 
-    async def _process_promotion_item(self, item, old_item=None):
-        promotion_id = self._value(item, "promotion_id")
-        promotion = await self.promotion_repository.get_by_id(promotion_id)
+    # =========================================================
+    # PROCESAR PROMOCIÓN
+    # =========================================================
 
-        if not promotion:
-            raise NotFoundException(f"La promoción con ID {promotion_id} no existe")
-        if not promotion.get("status", True):
-            raise NotFoundException(f"La promoción '{promotion.get('name', '')}' está inactiva")
+    async def _process_promotion_item(
+        self,
+        item,
+        old_item=None
+    ):
 
-        quantity = int(self._value(item, "quantity", 1))
-        if quantity <= 0:
-            raise NotFoundException("La cantidad de la promoción debe ser mayor a 0")
-
-        selections = self._normalize_promotion_selections(item)
-        old_promotion_item = old_item if old_item and old_item.get("type") == "promotion" else None
-        normalized_selections = await self._validate_promotion_selection(
-            promotion,
-            selections,
-            quantity=quantity,
-            old_promotion_item=old_promotion_item
+        promotion_id = self._value(
+            item,
+            "promotion_id"
         )
 
-        # La promoción tiene su propio precio. No se calcula sumando los
-        # precios individuales de los productos.
-        unit_price = promotion.get("price")
-        if unit_price is None:
-            unit_price = promotion.get("promotional_price")
-        if unit_price is None:
-            raise NotFoundException("La promoción no tiene un precio configurado")
+        promotion = await self.promotion_repository.get_by_id(
+            promotion_id
+        )
 
-        subtotal = float(unit_price) * quantity
+        if not promotion:
+
+            raise NotFoundException(
+                f"La promoción con ID "
+                f"{promotion_id} no existe"
+            )
+
+        if not promotion.get(
+            "status",
+            True
+        ):
+
+            raise NotFoundException(
+                f"La promoción "
+                f"'{promotion.get('name', '')}' "
+                "está inactiva"
+            )
+
+        quantity = int(
+            self._value(
+                item,
+                "quantity",
+                1
+            )
+        )
+
+        if quantity <= 0:
+
+            raise NotFoundException(
+                "La cantidad de la promoción "
+                "debe ser mayor a 0"
+            )
+
+        selections = (
+            self._normalize_promotion_selections(
+                item
+            )
+        )
+
+        old_promotion_item = (
+            old_item
+            if old_item
+            and old_item.get("type") == "promotion"
+            else None
+        )
+
+        normalized_selections = (
+            await self._validate_promotion_selection(
+                promotion,
+                selections,
+                quantity=quantity,
+                old_promotion_item=old_promotion_item
+            )
+        )
+
+        # -----------------------------------------------------
+        # PRECIO DE LA PROMOCIÓN
+        # -----------------------------------------------------
+
+        unit_price = promotion.get(
+            "price"
+        )
+
+        if unit_price is None:
+
+            unit_price = promotion.get(
+                "promotional_price"
+            )
+
+        if unit_price is None:
+
+            raise NotFoundException(
+                "La promoción no tiene "
+                "un precio configurado"
+            )
+
+        subtotal = (
+            float(unit_price)
+            * quantity
+        )
 
         return {
             "id": promotion_id,
             "type": "promotion",
             "promotion_id": promotion_id,
-            "name": promotion.get("name", "Promoción"),
+            "name": promotion.get(
+                "name",
+                "Promoción"
+            ),
             "quantity": quantity,
             "unit_price": float(unit_price),
             "subtotal": subtotal,
@@ -318,53 +690,169 @@ class OrderService(BaseService):
             "promotion_items": normalized_selections
         }, subtotal
 
-    async def _process_items(self, items, old_items=None):
+    # =========================================================
+    # PROCESAR ITEMS
+    # =========================================================
+
+    async def _process_items(
+        self,
+        items,
+        old_items=None
+    ):
+
         if not items:
-            raise NotFoundException("No se puede crear una comanda sin productos")
+
+            raise NotFoundException(
+                "No se puede crear una comanda "
+                "sin productos"
+            )
 
         old_items = old_items or []
+
         old_normal = {}
+
         old_promotions = {}
+
         for old_item in old_items:
-            if old_item.get("type") == "promotion":
-                old_promotions[str(old_item.get("promotion_id"))] = old_item
+
+            if old_item.get(
+                "type"
+            ) == "promotion":
+
+                old_promotions[
+                    str(
+                        old_item.get(
+                            "promotion_id"
+                        )
+                    )
+                ] = old_item
+
             else:
-                pid = str(old_item["product_id"])
-                old_normal[pid] = old_normal.get(pid, 0) + old_item["quantity"]
+
+                pid = str(
+                    old_item["product_id"]
+                )
+
+                old_normal[pid] = (
+                    old_normal.get(
+                        pid,
+                        0
+                    )
+                    + old_item["quantity"]
+                )
 
         order_items = []
+
         total_price = 0
 
         for item in items:
-            if self._is_promotion_item(item):
-                promotion_item, subtotal = await self._process_promotion_item(
-                    item, old_promotions.get(str(self._value(item, "promotion_id")))
+
+            # =================================================
+            # PROMOCIÓN
+            # =================================================
+
+            if self._is_promotion_item(
+                item
+            ):
+
+                promotion_item, subtotal = (
+                    await self._process_promotion_item(
+                        item,
+                        old_promotions.get(
+                            str(
+                                self._value(
+                                    item,
+                                    "promotion_id"
+                                )
+                            )
+                        )
+                    )
                 )
-                order_items.append(promotion_item)
+
+                order_items.append(
+                    promotion_item
+                )
+
                 total_price += subtotal
+
                 continue
 
-            product_id = self._value(item, "product_id")
-            quantity = int(self._value(item, "quantity", 0))
-            product = await self.product_repository.get_by_id(product_id)
+            # =================================================
+            # PRODUCTO NORMAL
+            # =================================================
+
+            product_id = self._value(
+                item,
+                "product_id"
+            )
+
+            quantity = int(
+                self._value(
+                    item,
+                    "quantity",
+                    0
+                )
+            )
+
+            product = await self.product_repository.get_by_id(
+                product_id
+            )
 
             if not product:
-                raise NotFoundException(f"El producto con ID {product_id} no existe")
-            if not product["status"]:
-                raise NotFoundException(f"El producto '{product['name']}' está inactivo.")
-            if quantity <= 0:
-                raise NotFoundException("La cantidad del producto debe ser mayor a 0")
 
-            old_quantity = old_normal.get(str(product_id), 0)
-            additional_quantity = quantity - old_quantity
-            if additional_quantity > 0 and product["quantity"] < additional_quantity:
                 raise NotFoundException(
-                    f"No hay stock suficiente del producto: {product['name']}. "
-                    f"Disponible: {product['quantity']}, solicitado adicionalmente: {additional_quantity}"
+                    f"El producto con ID "
+                    f"{product_id} no existe"
+                )
+
+            if not product["status"]:
+
+                raise NotFoundException(
+                    f"El producto "
+                    f"'{product['name']}' "
+                    "está inactivo."
+                )
+
+            if quantity <= 0:
+
+                raise NotFoundException(
+                    "La cantidad del producto "
+                    "debe ser mayor a 0"
+                )
+
+            old_quantity = old_normal.get(
+                str(product_id),
+                0
+            )
+
+            additional_quantity = (
+                quantity
+                - old_quantity
+            )
+
+            if (
+                additional_quantity > 0
+                and product["quantity"]
+                < additional_quantity
+            ):
+
+                raise NotFoundException(
+                    f"No hay stock suficiente "
+                    f"del producto: "
+                    f"{product['name']}. "
+                    f"Disponible: "
+                    f"{product['quantity']}, "
+                    f"solicitado adicionalmente: "
+                    f"{additional_quantity}"
                 )
 
             unit_price = product["price"]
-            subtotal = unit_price * quantity
+
+            subtotal = (
+                unit_price
+                * quantity
+            )
+
             order_items.append({
                 "id": product_id,
                 "type": "product",
@@ -375,9 +863,13 @@ class OrderService(BaseService):
                 "subtotal": subtotal,
                 "status": True
             })
+
             total_price += subtotal
 
-        return order_items, total_price
+        return (
+            order_items,
+            total_price
+        )
 
     # =========================================================
     # VALIDAR CAJA
@@ -428,10 +920,6 @@ class OrderService(BaseService):
         data
     ):
 
-        # -----------------------------------------------------
-        # NO PERMITIR CREAR DIRECTAMENTE CANCELADA
-        # -----------------------------------------------------
-
         if data.status_payment == "cancelled":
 
             raise NotFoundException(
@@ -440,7 +928,7 @@ class OrderService(BaseService):
             )
 
         # -----------------------------------------------------
-        # PROCESAR PRODUCTOS
+        # PROCESAR ITEMS
         # -----------------------------------------------------
 
         items, total_price = (
@@ -450,10 +938,7 @@ class OrderService(BaseService):
         )
 
         # -----------------------------------------------------
-        # TODA ORDEN DEBE TENER CAJA
-        #
-        # Como toda orden genera movimiento de caja,
-        # incluso si amount = 0, necesita una caja abierta.
+        # CAJA
         # -----------------------------------------------------
 
         if not data.cash_register_id:
@@ -468,7 +953,7 @@ class OrderService(BaseService):
         )
 
         # -----------------------------------------------------
-        # DATOS DE LA ORDEN
+        # FECHA
         # -----------------------------------------------------
 
         date = DateUtils.now_argentina()
@@ -513,10 +998,7 @@ class OrderService(BaseService):
         )
 
         # -----------------------------------------------------
-        # TODA ORDEN GENERA MOVIMIENTO DE CAJA
-        #
-        # pending = 0
-        # paid    = total
+        # MOVIMIENTO DE CAJA
         # -----------------------------------------------------
 
         amount = (
@@ -538,32 +1020,100 @@ class OrderService(BaseService):
     # CREAR MOVIMIENTOS DE STOCK
     # =========================================================
 
-    async def _create_stock_outflows(self, order):
+    async def _create_stock_outflows(
+        self,
+        order
+    ):
+
         for item in order["items"]:
-            if item.get("type") == "promotion":
-                for selection in item.get("promotion_items", []):
+
+            # -------------------------------------------------
+            # PROMOCIÓN
+            # -------------------------------------------------
+
+            if item.get(
+                "type"
+            ) == "promotion":
+
+                promotion_quantity = int(
+                    item.get(
+                        "quantity",
+                        1
+                    )
+                )
+
+                for selection in item.get(
+                    "promotion_items",
+                    []
+                ):
+
+                    quantity = (
+                        int(
+                            selection["quantity"]
+                        )
+                        * promotion_quantity
+                    )
+
                     movement = StockMovementCreate(
-                        product_id=selection["product_id"],
+
+                        product_id=selection[
+                            "product_id"
+                        ],
+
                         type="outflow",
-                        description=f"Venta pedido #{order['order_number']} - promoción {item['name']}",
-                        quantity=selection["quantity"] * item.get("quantity", 1),
+
+                        description=(
+                            f"Venta pedido "
+                            f"#{order['order_number']} "
+                            f"- promoción "
+                            f"{item['name']}"
+                        ),
+
+                        quantity=quantity,
+
                         order_id=order["id"],
+
                         status=True
                     )
-                    await self.stock_movement_service.create(movement)
+
+                    await self.stock_movement_service.create(
+                        movement
+                    )
+
+            # -------------------------------------------------
+            # PRODUCTO NORMAL
+            # -------------------------------------------------
+
             else:
+
                 movement = StockMovementCreate(
-                    product_id=item["product_id"],
+
+                    product_id=item[
+                        "product_id"
+                    ],
+
                     type="outflow",
-                    description=f"Venta pedido #{order['order_number']}",
-                    quantity=item["quantity"],
+
+                    description=(
+                        f"Venta pedido "
+                        f"#{order['order_number']}"
+                    ),
+
+                    quantity=item[
+                        "quantity"
+                    ],
+
                     order_id=order["id"],
+
                     status=True
                 )
-                await self.stock_movement_service.create(movement)
+
+                await self.stock_movement_service.create(
+                    movement
+                )
 
     # =========================================================
-    # CREAR MOVIMIENTO DE VENTA
+    # MOVIMIENTO DE CAJA
     # =========================================================
 
     async def _create_sale_cash_movement(
@@ -623,6 +1173,10 @@ class OrderService(BaseService):
             cash_movement
         )
 
+    # =========================================================
+    # ACTUALIZAR MOVIMIENTO DE CAJA
+    # =========================================================
+
     async def _update_sale_cash_movement(
         self,
         order_id,
@@ -630,18 +1184,37 @@ class OrderService(BaseService):
         method_payment,
         cash_register_id
     ):
-        """Actualiza exclusivamente el movimiento category='sale' de la orden."""
-        await self._get_cash_register(cash_register_id)
 
-        movement = await self.cash_movement_service.repository.collection.find_one({
-            "order_id": str(order_id),
-            "category": "sale",
-            "status": True
-        })
+        await self._get_cash_register(
+            cash_register_id
+        )
+
+        movement = (
+            await self.cash_movement_service
+            .repository
+            .collection
+            .find_one({
+                "order_id": str(order_id),
+                "category": "sale",
+                "status": True
+            })
+        )
 
         if not movement:
+
             raise NotFoundException(
-                "No se encontró el movimiento de venta de la orden"
+                "No se encontró el movimiento "
+                "de venta de la orden"
+            )
+
+        order = await self.repository.get_by_id(
+            str(order_id)
+        )
+
+        if not order:
+
+            raise NotFoundException(
+                "No se encontró la orden"
             )
 
         return await self.cash_movement_service.repository.update(
@@ -649,8 +1222,12 @@ class OrderService(BaseService):
             {
                 "amount": amount,
                 "method_payment": method_payment,
-                "cash_register_id": str(cash_register_id),
-                "description": f"Venta pedido #{(await self.repository.get_by_id(str(order_id)))['order_number']}"
+                "cash_register_id": str(
+                    cash_register_id
+                ),
+                "description":
+                    f"Venta pedido "
+                    f"#{order['order_number']}"
             }
         )
 
@@ -685,7 +1262,7 @@ class OrderService(BaseService):
         )
 
         # =====================================================
-        # CANCELADA NO PUEDE VOLVER ATRÁS
+        # CANCELADA NO VUELVE ATRÁS
         # =====================================================
 
         if old_payment_status == "cancelled":
@@ -693,8 +1270,8 @@ class OrderService(BaseService):
             if new_payment_status != "cancelled":
 
                 raise NotFoundException(
-                    "Una orden cancelada no puede volver "
-                    "a cambiar su estado de pago"
+                    "Una orden cancelada no puede "
+                    "volver a cambiar su estado de pago"
                 )
 
         # =====================================================
@@ -712,7 +1289,7 @@ class OrderService(BaseService):
             )
 
         # =====================================================
-        # NO EDITAR ITEMS SI ESTÁ PAGADA O CANCELADA
+        # NO EDITAR ITEMS SI PAGADA/CANCELADA
         # =====================================================
 
         if data.items is not None:
@@ -732,7 +1309,7 @@ class OrderService(BaseService):
                 )
 
         # -----------------------------------------------------
-        # DATOS A ACTUALIZAR
+        # DATOS
         # -----------------------------------------------------
 
         update_data = data.model_dump(
@@ -741,18 +1318,16 @@ class OrderService(BaseService):
         )
 
         # =====================================================
-        # DETERMINAR CAJA
+        # CAJA
         # =====================================================
 
         cash_register_id = (
             data.cash_register_id
             if data.cash_register_id is not None
-            else old_order.get("cash_register_id")
+            else old_order.get(
+                "cash_register_id"
+            )
         )
-
-        # =====================================================
-        # VALIDAR CAJA SI SE CAMBIA
-        # =====================================================
 
         if data.cash_register_id is not None:
 
@@ -795,8 +1370,8 @@ class OrderService(BaseService):
             if not cash_register_id:
 
                 raise NotFoundException(
-                    "Debe indicar la caja para registrar "
-                    "el pago"
+                    "Debe indicar la caja para "
+                    "registrar el pago"
                 )
 
             await self._get_cash_register(
@@ -809,24 +1384,20 @@ class OrderService(BaseService):
                 else old_order["method_payment"]
             )
 
-            # -------------------------------------------------
-            # ACTUALIZAR MOVIMIENTO EXISTENTE
-            # DE $0 -> TOTAL
-            # -------------------------------------------------
-
-            # Actualizar únicamente el movimiento de venta:
-            # pending -> 0
-            # paid    -> total
             await self._update_sale_cash_movement(
-                order_id=str(old_order["id"]),
-                amount=old_order["total_price"],
+                order_id=str(
+                    old_order["id"]
+                ),
+                amount=old_order[
+                    "total_price"
+                ],
                 method_payment=method_payment,
                 cash_register_id=cash_register_id
             )
 
-            update_data["cash_register_id"] = (
-                cash_register_id
-            )
+            update_data[
+                "cash_register_id"
+            ] = cash_register_id
 
         # =====================================================
         # PENDING -> CANCELLED
@@ -836,9 +1407,6 @@ class OrderService(BaseService):
             old_payment_status == "pending"
             and new_payment_status == "cancelled"
         ):
-
-            # El movimiento de caja original permanece
-            # registrado con amount = 0.
 
             await self._restore_order_stock(
                 old_order
@@ -859,7 +1427,7 @@ class OrderService(BaseService):
             )
 
         # =====================================================
-        # ACTUALIZAR ORDEN
+        # GUARDAR
         # =====================================================
 
         return await self.repository.update(
@@ -868,43 +1436,157 @@ class OrderService(BaseService):
         )
 
     # =========================================================
-    # AJUSTAR STOCK AL EDITAR ITEMS
+    # APLANAR STOCK
     # =========================================================
 
-    def _flatten_stock_requirements(self, items):
+    def _flatten_stock_requirements(
+        self,
+        items
+    ):
+
         result = {}
+
         for item in items or []:
-            if item.get("type") == "promotion":
-                multiplier = item.get("quantity", 1)
-                for selection in item.get("promotion_items", []):
-                    pid = str(selection["product_id"])
-                    result[pid] = result.get(pid, 0) + int(selection["quantity"]) * multiplier
+
+            if item.get(
+                "type"
+            ) == "promotion":
+
+                promotion_quantity = int(
+                    item.get(
+                        "quantity",
+                        1
+                    )
+                )
+
+                for selection in item.get(
+                    "promotion_items",
+                    []
+                ):
+
+                    pid = str(
+                        selection[
+                            "product_id"
+                        ]
+                    )
+
+                    result[pid] = (
+                        result.get(
+                            pid,
+                            0
+                        )
+                        + int(
+                            selection[
+                                "quantity"
+                            ]
+                        )
+                        * promotion_quantity
+                    )
+
             else:
-                pid = str(item["product_id"])
-                result[pid] = result.get(pid, 0) + int(item["quantity"])
+
+                pid = str(
+                    item["product_id"]
+                )
+
+                result[pid] = (
+                    result.get(
+                        pid,
+                        0
+                    )
+                    + int(
+                        item["quantity"]
+                    )
+                )
+
         return result
 
-    async def _adjust_order_stock(self, old_items, new_items, order_id):
-        old_map = self._flatten_stock_requirements(old_items)
-        new_map = self._flatten_stock_requirements(new_items)
-        product_ids = set(old_map).union(new_map)
+    # =========================================================
+    # AJUSTAR STOCK AL EDITAR
+    # =========================================================
+
+    async def _adjust_order_stock(
+        self,
+        old_items,
+        new_items,
+        order_id
+    ):
+
+        old_map = self._flatten_stock_requirements(
+            old_items
+        )
+
+        new_map = self._flatten_stock_requirements(
+            new_items
+        )
+
+        product_ids = (
+            set(old_map)
+            .union(new_map)
+        )
 
         for product_id in product_ids:
-            difference = new_map.get(product_id, 0) - old_map.get(product_id, 0)
+
+            difference = (
+                new_map.get(
+                    product_id,
+                    0
+                )
+                - old_map.get(
+                    product_id,
+                    0
+                )
+            )
+
             if difference > 0:
+
                 movement = StockMovementCreate(
-                    product_id=product_id, type="outflow",
-                    description=f"Agregado a pedido #{order_id}",
-                    quantity=difference, order_id=order_id, status=True
+
+                    product_id=product_id,
+
+                    type="outflow",
+
+                    description=(
+                        f"Agregado a pedido "
+                        f"#{order_id}"
+                    ),
+
+                    quantity=difference,
+
+                    order_id=order_id,
+
+                    status=True
                 )
-                await self.stock_movement_service.create(movement)
+
+                await self.stock_movement_service.create(
+                    movement
+                )
+
             elif difference < 0:
+
                 movement = StockMovementCreate(
-                    product_id=product_id, type="inflow",
-                    description=f"Quitado de pedido #{order_id}",
-                    quantity=abs(difference), order_id=order_id, status=True
+
+                    product_id=product_id,
+
+                    type="inflow",
+
+                    description=(
+                        f"Quitado de pedido "
+                        f"#{order_id}"
+                    ),
+
+                    quantity=abs(
+                        difference
+                    ),
+
+                    order_id=order_id,
+
+                    status=True
                 )
-                await self.stock_movement_service.create(movement)
+
+                await self.stock_movement_service.create(
+                    movement
+                )
 
     # =========================================================
     # REEMBOLSO
@@ -916,24 +1598,18 @@ class OrderService(BaseService):
         cash_register_id=None
     ):
 
-        # -----------------------------------------------------
-        # SI SE ENVÍA UNA CAJA, USAR ESA.
-        #
-        # Esto permite devolver dinero desde la caja
-        # actualmente abierta y no obliga a reabrir
-        # la caja original.
-        # -----------------------------------------------------
-
         selected_cash_register_id = (
             cash_register_id
-            or order.get("cash_register_id")
+            or order.get(
+                "cash_register_id"
+            )
         )
 
         if not selected_cash_register_id:
 
             raise NotFoundException(
-                "Debe indicar una caja para realizar "
-                "el reembolso"
+                "Debe indicar una caja para "
+                "realizar el reembolso"
             )
 
         cash_register = (
@@ -969,7 +1645,9 @@ class OrderService(BaseService):
 
             amount=order["total_price"],
 
-            method_payment=order["method_payment"],
+            method_payment=order[
+                "method_payment"
+            ],
 
             description=(
                 f"Reembolso pedido "
@@ -997,28 +1675,96 @@ class OrderService(BaseService):
     # RESTAURAR STOCK
     # =========================================================
 
-    async def _restore_order_stock(self, order):
+    async def _restore_order_stock(
+        self,
+        order
+    ):
+
         for item in order["items"]:
-            if item.get("type") == "promotion":
-                multiplier = item.get("quantity", 1)
-                for selection in item.get("promotion_items", []):
+
+            # -------------------------------------------------
+            # PROMOCIÓN
+            # -------------------------------------------------
+
+            if item.get(
+                "type"
+            ) == "promotion":
+
+                promotion_quantity = int(
+                    item.get(
+                        "quantity",
+                        1
+                    )
+                )
+
+                for selection in item.get(
+                    "promotion_items",
+                    []
+                ):
+
+                    quantity = (
+                        int(
+                            selection[
+                                "quantity"
+                            ]
+                        )
+                        * promotion_quantity
+                    )
+
                     movement = StockMovementCreate(
-                        product_id=selection["product_id"],
+
+                        product_id=selection[
+                            "product_id"
+                        ],
+
                         type="inflow",
-                        description=f"Devolución pedido #{order['order_number']} - promoción {item['name']}",
-                        quantity=selection["quantity"] * multiplier,
+
+                        description=(
+                            f"Devolución pedido "
+                            f"#{order['order_number']} "
+                            f"- promoción "
+                            f"{item['name']}"
+                        ),
+
+                        quantity=quantity,
+
                         order_id=order["id"],
+
                         status=True
                     )
-                    await self.stock_movement_service.create(movement)
+
+                    await self.stock_movement_service.create(
+                        movement
+                    )
+
+            # -------------------------------------------------
+            # PRODUCTO NORMAL
+            # -------------------------------------------------
+
             else:
+
                 movement = StockMovementCreate(
-                    product_id=item["product_id"],
+
+                    product_id=item[
+                        "product_id"
+                    ],
+
                     type="inflow",
-                    description=f"Devolución pedido #{order['order_number']}",
-                    quantity=item["quantity"],
+
+                    description=(
+                        f"Devolución pedido "
+                        f"#{order['order_number']}"
+                    ),
+
+                    quantity=item[
+                        "quantity"
+                    ],
+
                     order_id=order["id"],
+
                     status=True
                 )
-                await self.stock_movement_service.create(movement)
 
+                await self.stock_movement_service.create(
+                    movement
+                )
