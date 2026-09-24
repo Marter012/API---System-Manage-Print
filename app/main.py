@@ -14,6 +14,7 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
+        "https://system-manage-print-hun9ywyup-marter012s-projects.vercel.app/"
     ],
     allow_credentials=True,
     allow_methods=["*"],
