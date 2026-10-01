@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from app.schema.promotion_schema import (
     PromotionCreate,
@@ -7,6 +7,7 @@ from app.schema.promotion_schema import (
 )
 from app.services.promotion_service import PromotionService
 from app.websocket.events import broadcast_change
+from app.api.dependencies.auth import get_current_user
 
 
 router = APIRouter(
@@ -21,7 +22,7 @@ service = PromotionService()
     "/",
     response_model=list[PromotionResponse],
 )
-async def get_promotions():
+async def get_promotions(current_user = Depends(get_current_user)):
     return await service.get_all()
 
 
@@ -29,7 +30,7 @@ async def get_promotions():
     "/{promotion_id}",
     response_model=PromotionResponse,
 )
-async def get_promotion(promotion_id: str):
+async def get_promotion(promotion_id: str, current_user = Depends(get_current_user)):
     return await service.get_by_id(promotion_id)
 
 
@@ -40,6 +41,7 @@ async def get_promotion(promotion_id: str):
 async def create_promotion(
     data: PromotionCreate,
     request: Request,
+    current_user = Depends(get_current_user),
 ):
     result = await service.create(data)
 
@@ -61,6 +63,7 @@ async def update_promotion(
     promotion_id: str,
     data: PromotionUpdate,
     request: Request,
+    current_user = Depends(get_current_user),
 ):
     result = await service.update(promotion_id, data)
 

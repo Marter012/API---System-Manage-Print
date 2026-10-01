@@ -917,7 +917,8 @@ class OrderService(BaseService):
 
     async def create(
         self,
-        data
+        data,
+        current_user_id
     ):
 
         if data.status_payment == "cancelled":
@@ -1011,7 +1012,8 @@ class OrderService(BaseService):
             order=order,
             amount=amount,
             method_payment=data.method_payment,
-            cash_register_id=data.cash_register_id
+            cash_register_id=data.cash_register_id,
+            current_user_id=current_user_id
         )
 
         return order
@@ -1121,7 +1123,8 @@ class OrderService(BaseService):
         order,
         amount,
         method_payment,
-        cash_register_id
+        cash_register_id,
+        current_user_id
     ):
 
         cash_register = (
@@ -1170,7 +1173,8 @@ class OrderService(BaseService):
         )
 
         return await self.cash_movement_service.create(
-            cash_movement
+            cash_movement,
+            current_user_id
         )
 
     # =========================================================
@@ -1182,7 +1186,8 @@ class OrderService(BaseService):
         order_id,
         amount,
         method_payment,
-        cash_register_id
+        cash_register_id,
+        current_user_id
     ):
 
         await self._get_cash_register(
@@ -1227,7 +1232,10 @@ class OrderService(BaseService):
                 ),
                 "description":
                     f"Venta pedido "
-                    f"#{order['order_number']}"
+                    f"#{order['order_number']}",
+                "updated_by_user_id": str(
+                    current_user_id
+                )
             }
         )
 
@@ -1238,7 +1246,8 @@ class OrderService(BaseService):
     async def update(
         self,
         order_id,
-        data
+        data,
+        current_user_id
     ):
 
         old_order = await self.repository.get_by_id(
@@ -1392,7 +1401,8 @@ class OrderService(BaseService):
                     "total_price"
                 ],
                 method_payment=method_payment,
-                cash_register_id=cash_register_id
+                cash_register_id=cash_register_id,
+                current_user_id=current_user_id
             )
 
             update_data[
@@ -1423,7 +1433,8 @@ class OrderService(BaseService):
 
             await self._refund_order(
                 old_order,
-                cash_register_id=data.cash_register_id
+                cash_register_id=data.cash_register_id,
+                current_user_id=current_user_id
             )
 
         # =====================================================
@@ -1595,7 +1606,8 @@ class OrderService(BaseService):
     async def _refund_order(
         self,
         order,
-        cash_register_id=None
+        cash_register_id=None,
+        current_user_id=None
     ):
 
         selected_cash_register_id = (
@@ -1660,7 +1672,8 @@ class OrderService(BaseService):
         )
 
         await self.cash_movement_service.create(
-            cash_movement
+            cash_movement,
+            current_user_id
         )
 
         # -----------------------------------------------------

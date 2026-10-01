@@ -29,7 +29,7 @@ class CashRegisterService(BaseService):
     # CREAR CAJA
     # =========================================================
 
-    async def create(self, data):
+    async def create(self, data, current_user_id):
 
         # -----------------------------------------------------
         # VALIDAR TURNO
@@ -142,6 +142,10 @@ class CashRegisterService(BaseService):
             exclude_none=True
         )
 
+        cash_register_data["opened_by_user_id"] = str(
+            current_user_id
+        )
+
         return await self.repository.create(
             cash_register_data
         )
@@ -153,7 +157,8 @@ class CashRegisterService(BaseService):
     async def update(
         self,
         cash_register_id,
-        data
+        data,
+        current_user_id
     ):
 
         # -----------------------------------------------------
@@ -258,7 +263,10 @@ class CashRegisterService(BaseService):
         # CERRAR CAJA
         # =====================================================
 
-        if status_cash_register == "close":
+        if (
+            status_cash_register == "close"
+            and current_status == "open"
+        ):
 
             # -------------------------------------------------
             # VALIDAR MONTO DE CIERRE
@@ -540,6 +548,11 @@ class CashRegisterService(BaseService):
                     DateUtils.now_argentina()
                 )
 
+            # Registrar quién realizó el cierre.
+            update_data["closed_by_user_id"] = str(
+                current_user_id
+            )
+
         # =====================================================
         # CAMBIAR UNA CAJA ABIERTA
         # =====================================================
@@ -588,6 +601,10 @@ class CashRegisterService(BaseService):
         # =====================================================
         # ACTUALIZAR
         # =====================================================
+
+        update_data["updated_by_user_id"] = str(
+            current_user_id
+        )
 
         return await self.repository.update(
             cash_register_id,

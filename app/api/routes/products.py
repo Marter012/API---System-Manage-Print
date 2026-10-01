@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from app.schema.product_schema import (
     ProductResponse,
@@ -7,6 +7,7 @@ from app.schema.product_schema import (
 )
 from app.services.product_service import ProductService
 from app.websocket.events import broadcast_change
+from app.api.dependencies.auth import get_current_user
 
 
 router = APIRouter(
@@ -21,7 +22,7 @@ service = ProductService()
     "/",
     response_model=list[ProductResponse],
 )
-async def get_products():
+async def get_products(current_user = Depends(get_current_user)):
     return await service.get_all()
 
 
@@ -29,7 +30,7 @@ async def get_products():
     "/{product_id}",
     response_model=ProductResponse,
 )
-async def get_product(product_id: str):
+async def get_product(product_id: str, current_user = Depends(get_current_user)):
     return await service.get_by_id(product_id)
 
 
@@ -40,6 +41,7 @@ async def get_product(product_id: str):
 async def create_product(
     product: ProductCreate,
     request: Request,
+    current_user = Depends(get_current_user),
 ):
     result = await service.create(product)
 
@@ -61,6 +63,7 @@ async def update_product(
     product_id: str,
     product: ProductUpdate,
     request: Request,
+    current_user = Depends(get_current_user),
 ):
     result = await service.update(product_id, product)
 

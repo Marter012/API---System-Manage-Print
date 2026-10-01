@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from app.services.cash_movement_service import CashMovementService
 from app.schema.cash_movement_schema import (
@@ -7,6 +7,7 @@ from app.schema.cash_movement_schema import (
     CashMovementUpdate,
 )
 from app.websocket.events import broadcast_change
+from app.api.dependencies.auth import get_current_user
 
 
 router = APIRouter(
@@ -21,7 +22,7 @@ service = CashMovementService()
     "/",
     response_model=list[CashMovementResponse],
 )
-async def get_cash_movements():
+async def get_cash_movements(current_user = Depends(get_current_user)):
     return await service.get_all()
 
 
@@ -29,7 +30,7 @@ async def get_cash_movements():
     "/{cash_movement_id}",
     response_model=CashMovementResponse,
 )
-async def get_cash_movement(cash_movement_id: str):
+async def get_cash_movement(cash_movement_id: str, current_user = Depends(get_current_user)):
     return await service.get_by_id(cash_movement_id)
 
 
@@ -40,8 +41,9 @@ async def get_cash_movement(cash_movement_id: str):
 async def create_cash_movement(
     data: CashMovementCreate,
     request: Request,
+    current_user = Depends(get_current_user),
 ):
-    result = await service.create(data)
+    result = await service.create(data, current_user["sub"])
 
     await broadcast_change(
         resource="cash_movement",
@@ -61,8 +63,9 @@ async def update_cash_movement(
     cash_movement_id: str,
     data: CashMovementUpdate,
     request: Request,
+    current_user = Depends(get_current_user),
 ):
-    result = await service.update(cash_movement_id, data)
+    result = await service.update(cash_movement_id, data, current_user["sub"])
 
     await broadcast_change(
         resource="cash_movement",

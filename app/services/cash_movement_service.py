@@ -88,7 +88,8 @@ class CashMovementService(
 
     async def create(
         self,
-        data
+        data,
+        current_user_id
     ):
 
         # -----------------------------------------------------
@@ -200,6 +201,7 @@ class CashMovementService(
         )
 
         movement_data["amount"] = amount
+        movement_data["user_id"] = str(current_user_id)
 
         if not movement_data.get("date"):
 
@@ -222,7 +224,8 @@ class CashMovementService(
     async def update(
         self,
         movement_id,
-        data
+        data,
+        current_user_id
     ):
 
         old = await self.repository.get_by_id(
@@ -239,6 +242,9 @@ class CashMovementService(
             exclude_none=True,
             exclude_unset=True
         )
+
+        # Mantener el autor original y registrar quién lo modificó.
+        update_data["updated_by_user_id"] = str(current_user_id)
 
         # -----------------------------------------------------
         # VALIDAR MONTO
@@ -347,7 +353,8 @@ class CashMovementService(
         order_id,
         amount,
         method_payment,
-        cash_register_id
+        cash_register_id,
+        current_user_id
     ):
 
         # -----------------------------------------------------
@@ -454,6 +461,10 @@ class CashMovementService(
             "description": (
                 f"Venta pedido "
                 f"#{order['order_number']}"
+            ),
+
+            "updated_by_user_id": str(
+                current_user_id
             )
         }
 
@@ -468,7 +479,8 @@ class CashMovementService(
 
     async def deactivate_order_movement(
         self,
-        order_id
+        order_id,
+        current_user_id
     ):
 
         try:
@@ -500,6 +512,7 @@ class CashMovementService(
         return await self.repository.update(
             movement["id"],
             {
-                "status": False
+                "status": False,
+                "updated_by_user_id": str(current_user_id)
             }
         )

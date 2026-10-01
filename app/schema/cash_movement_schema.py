@@ -57,4 +57,6 @@ class CashMovementResponse(
     MongoModel
 ):
 
-    pass
+    user_id: str | None = None
+
+    updated_by_user_id: str | None = None

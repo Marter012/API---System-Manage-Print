@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from app.services.stock_movement_service import StockMovementService
 from app.schema.stock_movement_schema import (
@@ -7,6 +7,7 @@ from app.schema.stock_movement_schema import (
     StockMovementUpdate,
 )
 from app.websocket.events import broadcast_change
+from app.api.dependencies.auth import get_current_user
 
 
 router = APIRouter(
@@ -21,7 +22,7 @@ service = StockMovementService()
     "/",
     response_model=list[StockMovementResponse],
 )
-async def get_stock_movements():
+async def get_stock_movements(current_user = Depends(get_current_user)):
     return await service.get_all()
 
 
@@ -29,7 +30,7 @@ async def get_stock_movements():
     "/{stock_movement_id}",
     response_model=StockMovementResponse,
 )
-async def get_stock_movement(stock_movement_id: str):
+async def get_stock_movement(stock_movement_id: str, current_user = Depends(get_current_user)):
     return await service.get_by_id(stock_movement_id)
 
 
@@ -40,6 +41,7 @@ async def get_stock_movement(stock_movement_id: str):
 async def create_stock_movement(
     data: StockMovementCreate,
     request: Request,
+    current_user = Depends(get_current_user),
 ):
     result = await service.create(data)
 
@@ -61,6 +63,7 @@ async def update_stock_movement(
     stock_movement_id: str,
     data: StockMovementUpdate,
     request: Request,
+    current_user = Depends(get_current_user),
 ):
     result = await service.update(stock_movement_id, data)
 

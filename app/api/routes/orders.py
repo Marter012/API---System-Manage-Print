@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
 from app.services.order_service import OrderService
 from app.schema.order_schema import (
@@ -7,6 +7,7 @@ from app.schema.order_schema import (
     OrderUpdate,
 )
 from app.websocket.events import broadcast_change
+from app.api.dependencies.auth import get_current_user
 
 
 router = APIRouter(
@@ -21,7 +22,7 @@ service = OrderService()
     "/",
     response_model=list[OrderResponse],
 )
-async def get_orders():
+async def get_orders(current_user = Depends(get_current_user)):
     return await service.get_all()
 
 
@@ -29,7 +30,7 @@ async def get_orders():
     "/{order_id}",
     response_model=OrderResponse,
 )
-async def get_order(order_id: str):
+async def get_order(order_id: str, current_user = Depends(get_current_user)):
     return await service.get_by_id(order_id)
 
 
@@ -40,8 +41,9 @@ async def get_order(order_id: str):
 async def create_order(
     data: OrderCreate,
     request: Request,
+    current_user = Depends(get_current_user),
 ):
-    result = await service.create(data)
+    result = await service.create(data, current_user["sub"])
 
     # Este único evento representa toda la operación.
     # Crear una orden también puede modificar stock y caja.
@@ -64,8 +66,9 @@ async def update_order(
     order_id: str,
     data: OrderUpdate,
     request: Request,
+    current_user = Depends(get_current_user),
 ):
-    result = await service.update(order_id, data)
+    result = await service.update(order_id, data, current_user["sub"])
 
     await broadcast_change(
         resource="order",
