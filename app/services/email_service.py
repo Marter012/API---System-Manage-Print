@@ -33,7 +33,9 @@ Saludos,
 Boutique de Sabores
 """
         )
-
+        print("SMTP HOST:", settings.SMTP_HOST)
+        print("SMTP PORT:", settings.SMTP_PORT)
+        print("SMTP USER:", settings.SMTP_USERNAME)
         await aiosmtplib.send(
             message,
             hostname=settings.SMTP_HOST,
