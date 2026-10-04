@@ -1,16 +1,27 @@
 from app.repositories.base_repository import BaseRepository
+
 from app.database.connection import password_reset_collection
+
 from app.utils.serializers import serialize_mongo
+
 from app.utils.object_id import validate_object_id
 
 
 class PasswordResetRepository(BaseRepository):
 
     def __init__(self):
-        self.collection = password_reset_collection
-        super().__init__(self.collection)
 
-    async def get_by_user_id(self, user_id):
+        self.collection = password_reset_collection
+
+        super().__init__(
+            self.collection
+        )
+
+
+    async def get_by_user_id(
+        self,
+        user_id
+    ):
 
         document = await self.collection.find_one(
             {
@@ -22,9 +33,15 @@ class PasswordResetRepository(BaseRepository):
         if not document:
             return None
 
-        return serialize_mongo(document)
+        return serialize_mongo(
+            document
+        )
 
-    async def invalidate_by_user_id(self, user_id):
+
+    async def invalidate_by_user_id(
+        self,
+        user_id
+    ):
 
         await self.collection.update_many(
             {
@@ -33,12 +50,17 @@ class PasswordResetRepository(BaseRepository):
             },
             {
                 "$set": {
-                    "used": True
+                    "used": True,
+                    "status": "completed"
                 }
             }
         )
 
-    async def mark_as_used(self, document_id):
+
+    async def mark_as_verified(
+        self,
+        document_id
+    ):
 
         object_id = validate_object_id(
             document_id
@@ -50,7 +72,54 @@ class PasswordResetRepository(BaseRepository):
             },
             {
                 "$set": {
-                    "used": True
+                    "status": "verified"
                 }
             }
+        )
+
+
+    async def mark_as_used(
+        self,
+        document_id
+    ):
+
+        object_id = validate_object_id(
+            document_id
+        )
+
+        await self.collection.update_one(
+            {
+                "_id": object_id
+            },
+            {
+                "$set": {
+                    "used": True,
+                    "status": "completed"
+                }
+            }
+        )
+
+
+    async def get_status_by_user_id(
+        self,
+        user_id
+    ):
+
+        document = await self.collection.find_one(
+            {
+                "user_id": user_id
+            },
+            sort=[
+                (
+                    "created_at",
+                    -1
+                )
+            ]
+        )
+
+        if not document:
+            return None
+
+        return serialize_mongo(
+            document
         )

@@ -102,3 +102,14 @@ async def reset_password(
         data.code,
         data.new_password
     )
+
+@router.get(
+    "/reset-status"
+)
+async def reset_status(
+    email: str,
+):
+
+    return await service.get_reset_status(
+        email,
+    )

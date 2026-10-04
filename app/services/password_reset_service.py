@@ -33,20 +33,26 @@ class PasswordResetService:
         self.user_repository = UserRepository()
         self.email_service = EmailService()
 
-    async def create_reset_code(self, email):
+
+    async def create_reset_code(
+        self,
+        email
+    ):
 
         user = await self.user_repository.get_by_email(
             email
         )
 
         if not user:
+
             raise NotFoundException(
-                "El email no está asociado al sistema."
+                "No existe un usuario registrado con ese email."
             )
 
         if not user.get("status", False):
+
             raise UnauthorizedException(
-                "El usuario está inactivo."
+                "El usuario asociado a ese email se encuentra inactivo."
             )
 
         await self.repository.invalidate_by_user_id(
@@ -71,6 +77,7 @@ class PasswordResetService:
             "code_hash": code_hash,
             "expires_at": expires_at,
             "used": False,
+            "status": "pending",
             "created_at": now
         }
 
@@ -83,6 +90,7 @@ class PasswordResetService:
             code
         )
 
+
     async def verify_code(
         self,
         email,
@@ -94,13 +102,15 @@ class PasswordResetService:
         )
 
         if not user:
-            raise UnauthorizedException(
-                "Código inválido o expirado."
+
+            raise NotFoundException(
+                "No existe un usuario registrado con ese email."
             )
 
         if not user.get("status", False):
+
             raise UnauthorizedException(
-                "Código inválido o expirado."
+                "El usuario asociado a ese email se encuentra inactivo."
             )
 
         reset = await self.repository.get_by_user_id(
@@ -108,31 +118,46 @@ class PasswordResetService:
         )
 
         if not reset:
+
             raise UnauthorizedException(
-                "Código inválido o expirado."
+                "No existe un código de recuperación válido para este usuario."
             )
 
         if reset.get("used", False):
+
             raise UnauthorizedException(
-                "Código inválido o expirado."
+                "El código de recuperación ya fue utilizado."
+            )
+
+        if reset.get("status") == "verified":
+
+            raise UnauthorizedException(
+                "El código de recuperación ya fue verificado."
             )
 
         now = DateUtils.now_argentina()
 
         if reset["expires_at"] <= now:
+
             raise UnauthorizedException(
-                "Código inválido o expirado."
+                "El código de recuperación ha expirado."
             )
 
         if not verify_password(
             code,
             reset["code_hash"]
         ):
+
             raise UnauthorizedException(
-                "Código inválido o expirado."
+                "El código de recuperación ingresado es incorrecto."
             )
 
+        await self.repository.mark_as_verified(
+            reset["id"]
+        )
+
         return True
+
 
     async def reset_password(
         self,
@@ -146,13 +171,15 @@ class PasswordResetService:
         )
 
         if not user:
-            raise UnauthorizedException(
-                "Código inválido o expirado."
+
+            raise NotFoundException(
+                "No existe un usuario registrado con ese email."
             )
 
         if not user.get("status", False):
+
             raise UnauthorizedException(
-                "Código inválido o expirado."
+                "El usuario asociado a ese email se encuentra inactivo."
             )
 
         reset = await self.repository.get_by_user_id(
@@ -160,28 +187,38 @@ class PasswordResetService:
         )
 
         if not reset:
+
             raise UnauthorizedException(
-                "Código inválido o expirado."
+                "No existe un proceso de recuperación válido para este usuario."
             )
 
         if reset.get("used", False):
+
             raise UnauthorizedException(
-                "Código inválido o expirado."
+                "El proceso de recuperación ya fue completado."
+            )
+
+        if reset.get("status") != "verified":
+
+            raise UnauthorizedException(
+                "El código de recuperación todavía no fue verificado."
             )
 
         now = DateUtils.now_argentina()
 
         if reset["expires_at"] <= now:
+
             raise UnauthorizedException(
-                "Código inválido o expirado."
+                "El código de recuperación ha expirado."
             )
 
         if not verify_password(
             code,
             reset["code_hash"]
         ):
+
             raise UnauthorizedException(
-                "Código inválido o expirado."
+                "El código de recuperación ingresado es incorrecto."
             )
 
         password_hash = hash_password(
@@ -200,3 +237,44 @@ class PasswordResetService:
         )
 
         return True
+
+
+    async def get_reset_status(
+        self,
+        email
+    ):
+
+        user = await self.user_repository.get_by_email(
+            email
+        )
+
+        if not user:
+
+            raise NotFoundException(
+                "No existe un usuario registrado con ese email."
+            )
+
+        reset = await self.repository.get_status_by_user_id(
+            user["id"]
+        )
+
+        if not reset:
+
+            return {
+                "status": "none"
+            }
+
+        if reset.get("status") == "pending":
+
+            if reset["expires_at"] <= DateUtils.now_argentina():
+
+                return {
+                    "status": "expired"
+                }
+
+        return {
+            "status": reset.get(
+                "status",
+                "none"
+            )
+        }

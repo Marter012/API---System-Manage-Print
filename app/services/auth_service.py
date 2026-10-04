@@ -4,7 +4,10 @@ from app.repositories.user_repository import UserRepository
 
 from app.services.password_reset_service import PasswordResetService
 
-from app.utils.exceptions import UnauthorizedException, NotFoundException
+from app.utils.exceptions import (
+    UnauthorizedException,
+    NotFoundException
+)
 
 from app.utils.password import verify_password
 
@@ -28,22 +31,44 @@ class AuthService:
             PasswordResetService()
         )
 
-    async def _get_active_user_by_id(self, user_id):
+
+    async def _get_active_user_by_id(
+        self,
+        user_id
+    ):
+
         try:
-            user = await self.repository.get_by_id(user_id)
-        except NotFoundException:
-            raise UnauthorizedException(
-                "Usuario inactivo o inexistente"
+
+            user = await self.repository.get_by_id(
+                user_id
             )
 
-        if not user or not user.get("status", False):
+        except NotFoundException:
+
             raise UnauthorizedException(
-                "Usuario inactivo o inexistente"
+                "El usuario asociado al token no existe."
+            )
+
+        if not user:
+
+            raise UnauthorizedException(
+                "El usuario asociado al token no existe."
+            )
+
+        if not user.get("status", False):
+
+            raise UnauthorizedException(
+                "El usuario asociado al token se encuentra inactivo."
             )
 
         return user
 
-    def _build_tokens(self, user):
+
+    def _build_tokens(
+        self,
+        user
+    ):
+
         user_claims = {
             "sub": user["id"],
             "username": user["username"],
@@ -52,20 +77,27 @@ class AuthService:
 
         access_token = create_access_token(
             user_claims,
-            timedelta(minutes=self.ACCESS_TOKEN_EXPIRE_MINUTES)
+            timedelta(
+                minutes=self.ACCESS_TOKEN_EXPIRE_MINUTES
+            )
         )
 
         refresh_token = create_refresh_token(
             user["id"],
-            timedelta(days=self.REFRESH_TOKEN_EXPIRE_DAYS)
+            timedelta(
+                days=self.REFRESH_TOKEN_EXPIRE_DAYS
+            )
         )
 
         return {
             "access_token": access_token,
             "token_type": "bearer",
             "refresh_token": refresh_token,
-            "expires_in": self.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "expires_in": (
+                self.ACCESS_TOKEN_EXPIRE_MINUTES * 60
+            ),
         }
+
 
     async def login(
         self,
@@ -73,43 +105,68 @@ class AuthService:
         password
     ):
 
-        existing_user = await self.repository.get_by_username(
-            username
+        existing_user = (
+            await self.repository.get_by_username(
+                username
+            )
         )
 
         if not existing_user:
+
             raise UnauthorizedException(
-                "Usuario o contraseña incorrectos."
+                "El nombre de usuario no existe."
             )
 
-        if not existing_user["status"]:
+        if not existing_user.get("status", False):
+
             raise UnauthorizedException(
-                "Usuario o contraseña incorrectos."
+                "El usuario se encuentra inactivo."
             )
 
         if not verify_password(
             password,
             existing_user["password_hash"]
         ):
+
             raise UnauthorizedException(
-                "Usuario o contraseña incorrectos."
+                "La contraseña ingresada es incorrecta."
             )
 
-        return self._build_tokens(existing_user)
+        return self._build_tokens(
+            existing_user
+        )
 
-    async def refresh(self, refresh_token):
-        payload = decode_refresh_token(refresh_token)
+
+    async def refresh(
+        self,
+        refresh_token
+    ):
+
+        payload = decode_refresh_token(
+            refresh_token
+        )
 
         user_id = payload.get("sub")
 
         if not user_id:
-            raise UnauthorizedException("Refresh token inválido")
 
-        user = await self._get_active_user_by_id(user_id)
+            raise UnauthorizedException(
+                "El refresh token no contiene un usuario válido."
+            )
 
-        return self._build_tokens(user)
+        user = await self._get_active_user_by_id(
+            user_id
+        )
 
-    async def forgot_password(self, email):
+        return self._build_tokens(
+            user
+        )
+
+
+    async def forgot_password(
+        self,
+        email
+    ):
 
         await self.password_reset_service.create_reset_code(
             email
@@ -121,6 +178,7 @@ class AuthService:
                 "recibirás un código de recuperación."
             )
         }
+
 
     async def verify_reset_code(
         self,
@@ -134,8 +192,9 @@ class AuthService:
         )
 
         return {
-            "message": "Código válido."
+            "message": "El código de recuperación es válido."
         }
+
 
     async def reset_password(
         self,
@@ -151,5 +210,17 @@ class AuthService:
         )
 
         return {
-            "message": "Contraseña actualizada correctamente."
+            "message": (
+                "La contraseña fue actualizada correctamente."
+            )
         }
+
+
+    async def get_reset_status(
+        self,
+        email
+    ):
+
+        return await self.password_reset_service.get_reset_status(
+            email
+        )
