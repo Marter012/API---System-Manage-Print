@@ -20,7 +20,8 @@ from app.utils.password import (
 from app.utils.dateZone import DateUtils
 
 from app.utils.exceptions import (
-    UnauthorizedException
+    UnauthorizedException,
+    NotFoundException
 )
 
 
@@ -38,12 +39,15 @@ class PasswordResetService:
             email
         )
 
-        # No revelamos si el usuario existe.
         if not user:
-            return
+            raise NotFoundException(
+                "El email no está asociado al sistema."
+            )
 
-        if not user["status"]:
-            return
+        if not user.get("status", False):
+            raise UnauthorizedException(
+                "El usuario está inactivo."
+            )
 
         await self.repository.invalidate_by_user_id(
             user["id"]
@@ -94,6 +98,11 @@ class PasswordResetService:
                 "Código inválido o expirado."
             )
 
+        if not user.get("status", False):
+            raise UnauthorizedException(
+                "Código inválido o expirado."
+            )
+
         reset = await self.repository.get_by_user_id(
             user["id"]
         )
@@ -103,10 +112,14 @@ class PasswordResetService:
                 "Código inválido o expirado."
             )
 
+        if reset.get("used", False):
+            raise UnauthorizedException(
+                "Código inválido o expirado."
+            )
+
         now = DateUtils.now_argentina()
 
         if reset["expires_at"] <= now:
-
             raise UnauthorizedException(
                 "Código inválido o expirado."
             )
@@ -115,7 +128,6 @@ class PasswordResetService:
             code,
             reset["code_hash"]
         ):
-
             raise UnauthorizedException(
                 "Código inválido o expirado."
             )
@@ -138,6 +150,11 @@ class PasswordResetService:
                 "Código inválido o expirado."
             )
 
+        if not user.get("status", False):
+            raise UnauthorizedException(
+                "Código inválido o expirado."
+            )
+
         reset = await self.repository.get_by_user_id(
             user["id"]
         )
@@ -147,10 +164,14 @@ class PasswordResetService:
                 "Código inválido o expirado."
             )
 
+        if reset.get("used", False):
+            raise UnauthorizedException(
+                "Código inválido o expirado."
+            )
+
         now = DateUtils.now_argentina()
 
         if reset["expires_at"] <= now:
-
             raise UnauthorizedException(
                 "Código inválido o expirado."
             )
@@ -159,7 +180,6 @@ class PasswordResetService:
             code,
             reset["code_hash"]
         ):
-
             raise UnauthorizedException(
                 "Código inválido o expirado."
             )

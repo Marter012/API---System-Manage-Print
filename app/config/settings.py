@@ -9,15 +9,8 @@ class Settings(BaseSettings):
 
     SECRET_KEY: str
 
-    SMTP_HOST: str
-
-    SMTP_PORT: int = 587
-
-    SMTP_USERNAME: str
-
-    SMTP_PASSWORD: str
-
-    SMTP_FROM: str
+    MAILERSEND_API_KEY: str
+    MAILERSEND_FROM_EMAIL: str
 
     INITIAL_ADMIN_USERNAME: str
     INITIAL_ADMIN_EMAIL: str

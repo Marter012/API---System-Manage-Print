@@ -1,46 +1,57 @@
-from email.message import EmailMessage
-
-import aiosmtplib
+import httpx
 
 from app.config.settings import settings
 
 
 class EmailService:
 
-    async def send_password_reset_code(self, recipient, code):
+    async def send_password_reset_code(
+        self,
+        recipient: str,
+        code: str,
+    ) -> None:
 
-        message = EmailMessage()
+        url = "https://api.mailersend.com/v1/email"
 
-        message["From"] = settings.SMTP_FROM
-        message["To"] = recipient
-        message["Subject"] = "Código para recuperar tu contraseña"
+        headers = {
+            "Authorization": (
+                f"Bearer {settings.MAILERSEND_API_KEY}"
+            ),
+            "Content-Type": "application/json",
+        }
 
-        message.set_content(
-            f"""
-Hola,
+        payload = {
+            "from": {
+                "email": settings.MAILERSEND_FROM_EMAIL,
+                "name": "Boutique de Sabores",
+            },
+            "to": [
+                {
+                    "email": recipient,
+                }
+            ],
+            "subject": "Código para recuperar tu contraseña",
+            "text": (
+                "Hola,\n\n"
+                "Recibimos una solicitud para cambiar "
+                "tu contraseña.\n\n"
+                "Tu código de recuperación es:\n\n"
+                f"{code}\n\n"
+                "Este código es válido durante 10 minutos.\n\n"
+                "Si no solicitaste cambiar tu contraseña, "
+                "ignorá este mensaje.\n\n"
+                "Saludos,\n"
+                "Boutique de Sabores"
+            ),
+        }
 
-Recibimos una solicitud para cambiar tu contraseña.
+        async with httpx.AsyncClient() as client:
 
-Tu código de recuperación es:
+            response = await client.post(
+                url,
+                headers=headers,
+                json=payload,
+                timeout=30.0,
+            )
 
-{code}
-
-Este código es válido durante 10 minutos.
-
-Si no solicitaste cambiar tu contraseña, ignora este mensaje.
-
-Saludos,
-Boutique de Sabores
-"""
-        )
-        print("SMTP HOST:", settings.SMTP_HOST)
-        print("SMTP PORT:", settings.SMTP_PORT)
-        print("SMTP USER:", settings.SMTP_USERNAME)
-        await aiosmtplib.send(
-            message,
-            hostname=settings.SMTP_HOST,
-            port=settings.SMTP_PORT,
-            username=settings.SMTP_USERNAME,
-            password=settings.SMTP_PASSWORD,
-            start_tls=True
-        )
+            response.raise_for_status()
